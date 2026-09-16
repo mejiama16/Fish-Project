@@ -2,7 +2,7 @@
 title: "Feature Engineering and Conformal Prediction in Fish Classification."
 author: Mariana Garcia Mejia
 thanks: "Code and data are available at: [https://github.com/mejiama16/Fish-Project](https://github.com/mejiama16/Fish-Project)."
-date: 08 May 2026
+date: today
 date-format: long
 abstract: "Description of methods and main findings"
 format: pdf
