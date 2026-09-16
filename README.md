@@ -1,0 +1,1 @@
+This repository contains all documentation for my project for STA496: Reading course in statistics.
