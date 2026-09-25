@@ -1,0 +1,341 @@
+---
+title: "Feature Engineering and Conformal Prediction in Fish Classification."
+author: Mariana Garcia Mejia
+thanks: "Code and data are available at: [https://github.com/mejiama16/Fish-Project](https://github.com/mejiama16/Fish-Project). The data for this paper was retrieved from the [Fish Tether Experiment GitHub Repository.](https://github.com/WidebandPingFest/FishTetherExperiment)."
+date: today
+date-format: long
+abstract: "Description of methods and main findings"
+format: 
+  pdf:
+    keep-tex: true
+    number-sections: true
+    toc: false
+#bibliography: references.bib
+---
+
+# Introduction {#sec-introduction}
+
+Hydroacoustic signals provide a non-lethal approach for fish classification. However, the features used for classification are high-dimensional and highly correlated. We are also often only given labels for a subset of the data, and must leverage both labelled and non-labelled data to improve classification accuracy. Lastly, we often care to understand which signals are most important for classification, but the correlation among features distorts this signal. The student will use various data science and machine learning approaches to address the data structure challenges and classification tasks. 
+
+
+# Data {#sec-data}
+
+```{r}
+#| echo: false
+#| warning: false
+
+#### LIBRARIES
+library(tidyverse)
+library(here)
+library(knitr)
+library(patchwork)
+
+#### LOAD THE DATA
+df <- read_csv(here("data/analysis.csv"))
+```
+
+The data set contains 14,575 rows and 484 columns. Each row represents one fish and it's measurement for a single "ping". A "ping" refers to a time the fish hydroacoustic signal was measured and stored in the dataset. Since multiple signals were recorded for a single fish, there are several rows corresponding the same fish (e.g. there are multiple rows for LT001; Lake Trout fish number one, because multiple measures were taken for this single fish). From now on, we call rows "pings", to familiarize ourselves with how the data was being collected.
+
+The dataset contains information for three fish species: Lake Trout (LT), Lake Whitefish (LW) and Smallmouth Bass (SMB). @tbl-data-overview summarizes relevant information about the dataset for each of the species.
+
+```{r}
+#| label: tbl-data-overview
+#| tbl-cap: "Overview of the dataset"
+#| echo: false
+#| warning: false
+
+tbl_species <- df |>
+  group_by(species, fishNum) |>
+  summarize(n_rows = n(),
+            .groups = "drop")
+
+species_tbl <- tbl_species |>
+  group_by(species) |>
+  summarise(num_individual_fish = n(),
+            total_rows = sum(n_rows),
+            median_rows_per_fish = median(n_rows),
+            min_rows = min(n_rows),
+            max_rows= max(n_rows)
+  )
+
+# renaming and formatting
+species_tbl |>
+  mutate(species = fct_recode(species,
+                              "LT"      = "lakeTrout",
+                              "LW"  = "lakeWhitefish",
+                              "SMB" = "smallmouthBass")) |>
+  kable(col.names = c("Species",
+                      "Number of fish",
+                      "Total pings",
+                      "Median pings",
+                      "Min. pings",
+                      "Max. pings"),
+        format.args = list(big.mark = ","),
+        align = "lccccc")
+
+```
+
+The data was obtained from 44 distinct fishes: 21 Lake Trout, 11 Lake Whitefish and and 12 Smallmouth Bass. Lake Trout fishes has more pings (instances where data was collected from them), followed by Lake Whitefish and Smallmouth Bass. Although the LW species had less individual fish, more pings were obtained for this species than for SMB. The median pings column shows the median number of pings across all individual fishes for a certain species, in other words, what was the median number of instances where measurements were taken from a single fish. The values are fairly similar across LT and SMB, while LW had more pings in a single fish compared to the other. This is likely because the minimum and maximum number of pings obtained for LW is much higher than for LT and SMB. 
+
+It is important to understand the structure of the data and how it is collected, as it largely shapes the statistical method we select and how we make decisions throughout the process. In particular, the rows in this data do not represent single instances or observations, rather, each represents an instance of a subject in time; a measurement taken from a fish. As a result, it is possible for measurements obtained in this instances, although different may be highly correlated, as they come from a similar procedure done on a same subject multiple times. For instance, the rows 1-65 in the raw data set correspond to LT001, Lake Trout fish number one. Because all hydroacoustic signals are taken from this single fish, just at different points in time, it is possible for these to vary very little from measurement to measurement, resulting in highly correlated variables.
+
+Now, one might think that the solution is to constraint our data set and analysis to just the 44 individual fish, by randomly selecting one of the measurements taken from each of them. The first issue with this approach is the resulting sample size. We have over 14,000 measurements obtained from this experiment, it seems like exploring the data to overcome the high correlation issue would be a much better solution, as compared to blindly throwing observations away. Another issue with this is: how do we pick which individual pings to keep and which to ignore? Do we hand-pick them? Do we select them randomly? Do we select two per day and ignore the rest? Lastly, when building machine learning models with this data, how can we ensure there is no data leakage? If we keep some observations from fish LT001 in the training set and some in the testing set, it is possible that due to the high correlation between these, the model has already memorized these patterns, leading to an overestimation of the model's actual capacity.
+
+This paper will touch on some of the decisions we must make when building models using this kind of data, and compare across them. We will do so in the context of feature engineering: deciding which features or variables are the most informative in the classification task. That is, given all the signals we have available for a new, unknown fish, which of these signals are the most likely to help us decide whether this fish is a Lake Trout, a Lake Whitefish or a Smallmouth Bass.
+
+## Exploratory data analysis
+
+Before jumping into the methods by which we will perform feature engineering. It is important to better understand other characteristics of the data. First, the data contains a time series component. The pings for each fish at taken at different times throughout a period of time, no two pings happen simultaneously. Hence, it is of interest to also understand this characteristic of our data that may also shape our upcoming decisions.
+
+```{r}
+#| label: tbl-data-time
+#| tbl-cap: "Span of the data collection process (pings)"
+#| echo: false
+#| warning: false
+
+
+tbl_date <- df |>
+  group_by(species, fishNum) |>
+  summarise(n_rows = n(),
+            first_day = min(dateSample),
+            last_day = max(dateSample),
+            .groups = "drop")
+
+date_tbl <- tbl_date |>
+  group_by(species) |>
+  summarise(first_day = min(first_day),
+            last_day = max(last_day)
+            )
+
+date_tbl |>
+  mutate(species = fct_recode(species,
+                              "LT" = "lakeTrout",
+                              "LW" = "lakeWhitefish",
+                              "SMB" = "smallmouthBass")) |>
+  kable(col.names = c("Species",
+                      "Earliest day a ping was made",
+                      "Latest day a ping was made"),
+        format.args = list(big.mark = ","),
+        align = "lcc")
+
+```
+@tbl-data-time shows that the data was collected in the span of a week, with SMB having data collected in a much shorter period of time. Note that the data set included other dates, for example `processedDate`, however we keep `sampleDate` to reflect the time the measurement was taken.
+
+As mentioned earlier, the data set contains a total of 484 columns, out of which **426 are hydro acoustic signals** or frequencies. The rest contains species, unique identifier for the fish and other variables like sex, air bladder weight, tissue sample, length, among others. It is possible that these measures where taken via more aggressive methods, as a result, our analysis focuses on just the hydro acoustic signals, as a form to explore non-lethal methods to deal with species classification and problems adjacent to it.
+
+These values range from roughly -20 to -105, they particularly appear as negative.
+
+## Analysis of one species: Lake Trout
+
+In this following section, we explore the different variables available in the data set for the Lake Trout species. 
+
+```{r}
+#| label: tbl-frequency-variation
+#| tbl-cap: "Variation over time for frequencies F45, F55, F65 for LT001."
+#| echo: false
+#| warning: false
+
+
+# Use dateTimeSample if you have it — finer time resolution within a day
+time_var <- "dateSample"   # switch to "dateSample" if dateTimeSample isn't usable
+
+lt001 <- df |>
+  filter(fishNum == "LT001") |>
+  arrange(.data[[time_var]])
+
+# Pick 3 frequencies to compare, spread across the spectrum.
+# Swap these for ones you know have good coverage (check range_tbl / miss_by_freq first).
+freqs_to_plot <- c("F45", "F55", "F65")
+
+make_ts_plot <- function(freq_col) {
+  lt001 |>
+    filter(!is.na(.data[[freq_col]])) |>
+    ggplot(aes(x = .data[[time_var]], y = .data[[freq_col]])) +
+    geom_line(color = "#7fb3a0", alpha = 0.6) +
+    geom_point(size = 0.8, color = "#4d7d6b") +
+    labs(title = freq_col, x = NULL, y = "Signal") +
+    theme_minimal(base_size = 11)
+}
+
+plots <- map(freqs_to_plot, make_ts_plot)
+
+plots[[1]] + plots[[2]] + plots[[3]] +
+  plot_annotation(title = "LT001: signal over time at three frequencies",
+                   theme = theme(plot.title = element_text(face = "bold", hjust = 0.5)))
+```
+
+@tbl-frequency-variation demonstrates significant variation in signals F45, F55, F65 across different pings for the same fish, LT001. However, it is difficult to see how the time component is present.
+
+```{r}
+#| echo: false
+#| warning: false
+
+df |>
+  ggplot(aes(x = dateSample, fill = species)) +
+  geom_histogram(binwidth = 1, color = "white", show.legend = FALSE) +
+  facet_wrap(~species, nrow = 1) +
+  scale_fill_manual(values = c(lakeTrout = "#7fb3a0",
+                               lakeWhitefish = "#e09a78",
+                               smallmouthBass = "#98a1c4")) +
+  labs(title = "Measurements per day, by species",
+       x = NULL, y = "Count (rows)") +
+  theme_minimal(base_size = 12) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+#| echo: false
+#| warning: false
+library(lubridate)
+
+# Count measurements per second, per species
+ts_counts <- df |>
+  mutate(dateTimeSample = floor_date(dateTimeSample, "second")) |>
+  count(species, dateTimeSample, name = "n")
+
+ggplot(ts_counts, aes(x = dateTimeSample, y = n, color = species)) +
+  geom_line(alpha = 0.6) +
+  geom_point(size = 0.5) +
+  facet_wrap(~ as.Date(dateTimeSample), scales = "free_x", nrow = 1) +
+  scale_color_manual(values = c(lakeTrout = "#7fb3a0",
+                                lakeWhitefish = "#e09a78",
+                                smallmouthBass = "#98a1c4")) +
+  scale_x_datetime(date_labels = "%H:%M:%S") +
+  labs(title = "Measurements over time, by species",
+       x = NULL, y = "Rows per second", color = "Species") +
+  theme_minimal(base_size = 11) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+#| echo: false
+#| warning: false
+
+freq_col <- "F45"   # swap in whichever frequency you want to inspect
+
+ts_signal <- df |>
+  filter(!is.na(.data[[freq_col]])) |>
+  group_by(species, dateTimeSample) |>
+  summarise(value = mean(.data[[freq_col]], na.rm = TRUE), .groups = "drop")
+
+ggplot(ts_signal, aes(x = dateTimeSample, y = value, color = species)) +
+  geom_line(alpha = 0.6) +
+  geom_point(size = 0.5) +
+  facet_wrap(~ as.Date(dateTimeSample), scales = "free_x", nrow = 1) +
+  scale_color_manual(values = c(lakeTrout = "#7fb3a0",
+                                lakeWhitefish = "#e09a78",
+                                smallmouthBass = "#98a1c4")) +
+  scale_x_datetime(date_labels = "%H:%M:%S") +
+  labs(title = paste0(freq_col, " signal over time, by species"),
+       x = NULL, y = freq_col, color = "Species") +
+  theme_minimal(base_size = 11) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+#| echo: false
+#| warning: false
+
+freq_cols <- df |> select(matches("^F\\d+(\\.\\d+)?$")) |> names()
+freq_missing <- tibble(
+  col = freq_cols,
+  n_missing   = map_dbl(freq_cols, ~ sum(is.na(df[[.x]]))),
+  pct_missing = map_dbl(freq_cols, ~ mean(is.na(df[[.x]])) * 100)
+) |>
+  filter(n_missing > 0) |>
+  arrange(desc(pct_missing))
+
+freq_missing2 <- freq_missing |>
+  group_by(n_missing) |>
+  summarize(common_missing = n())
+
+freq_missing2
+```
+Missing values: 161 frequencies are missing for 4,059 pings/rows and 175 frequencies are missing for 183 pings/rows. Since the information is missing just for some observations rather than for entire columns, dropping them could mean losing information. From F173-F260 there are 183 missing for each and from F90-F170 we are missing 4059 for each.
+
+```{r}
+#| echo: false
+#| warning: false
+
+freq_missing
+```
+
+```{r}
+#| echo: false
+#| warning: false
+
+# The two blocks you found
+block1 <- freq_cols[parse_number(freq_cols) >= 90  & parse_number(freq_cols) <= 170]
+block2 <- freq_cols[parse_number(freq_cols) >= 173 & parse_number(freq_cols) <= 260]
+
+flagged_cols <- c(block1, block2)
+
+# % missing per species, per frequency
+miss_by_species <- df |>
+  group_by(species) |>
+  summarise(across(all_of(flagged_cols), ~ mean(is.na(.x)) * 100), .groups = "drop") |>
+  pivot_longer(-species, names_to = "col", values_to = "pct_missing") |>
+  mutate(freq = parse_number(col),
+         block = if_else(freq <= 170, "F90–F170", "F173–F260"))
+
+ggplot(miss_by_species, aes(x = freq, y = species, fill = pct_missing)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "firebrick", limits = c(0, 100),
+                       name = "% missing") +
+  facet_wrap(~block, scales = "free_x") +
+  labs(title = "Missingness by species and frequency",
+       x = "Frequency", y = NULL) +
+  theme_minimal(base_size = 11)
+```
+```{r}
+#| echo: false
+#| warning: false
+
+miss_counts_species <- df |>
+  group_by(species) |>
+  summarise(across(all_of(flagged_cols), ~ sum(is.na(.x))), .groups = "drop") |>
+  pivot_longer(-species, names_to = "col", values_to = "n_missing") |>
+  mutate(freq = parse_number(col),
+         block = if_else(freq <= 170, "F90–F170", "F173–F260"))
+
+miss_counts_species |>
+  group_by(species, block) |>
+  summarise(total_missing = sum(n_missing), .groups = "drop") |>
+  pivot_wider(names_from = block, values_from = total_missing)
+```
+
+
+# Methods
+
+## Variance filtering
+```{r}
+#| echo: false
+#| warning: false
+
+# ---- 1. Top 15 most variable frequencies ----------------------
+freq_ok <- freq_cols[map_lgl(freq_cols, ~ isTRUE(sd(df[[.x]], na.rm = TRUE) > 0))]
+
+var_tbl <- tibble(
+  col = freq_ok,
+  variance = map_dbl(freq_ok, ~ var(df[[.x]], na.rm = TRUE))
+) |>
+  arrange(desc(variance)) |>
+  slice_head(n = 30)
+
+ggplot(var_tbl, aes(x = variance, y = fct_reorder(col, variance))) +
+  geom_col(fill = "#7fb3a0") +
+  labs(title = "Top 15 Most Variable Frequencies",
+       x = "Variance", y = "Frequency") +
+  theme_minimal(base_size = 12)
+```
+
+## PCA
+Before doing PCA. Questions:
+1. What to do about missing values? Missing for some fish, not for others.
+2. I don't think using all 14,000 will be too informative. Should we average all the variables for a single fish? I'm not sure how to use this.
+
+
+
+# Results
+
+# Discussion
