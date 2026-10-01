@@ -1,7 +1,7 @@
 ---
 title: "Feature Engineering and Conformal Prediction in Fish Classification."
 author: Mariana Garcia Mejia
-thanks: "Code and data are available at: [https://github.com/mejiama16/Fish-Project](https://github.com/mejiama16/Fish-Project). The data for this paper was retrieved from the [Fish Tether Experiment GitHub Repository.](https://github.com/WidebandPingFest/FishTetherExperiment)."
+thanks: "Code and data are available at: [https://github.com/mejiama16/Fish-Project](https://github.com/mejiama16/Fish-Project). The data for this paper was retrieved from the [Fish Tether Experiment GitHub Repository](https://github.com/WidebandPingFest/FishTetherExperiment)."
 date: today
 date-format: long
 abstract: "Description of methods and main findings"
@@ -32,6 +32,33 @@ library(patchwork)
 
 #### LOAD THE DATA
 df <- read_csv(here("data/analysis.csv"))
+```
+```{r, echo=FALSE, include=FALSE}
+subset_data <- df|> filter(species=="lakeWhitefish") 
+subset_data <- subset_data[, 59:ncol(df)]
+sum(!complete.cases(subset_data))
+
+names(subset_data)[ncol(subset_data)]
+
+```
+
+```{r, echo=FALSE, warning=FALSE}
+# Load libraries
+# install.packages("corrplot")
+library(corrplot)
+
+# Compute correlation matrix
+cor_mat <- cor(subset_data, use = "complete.obs")
+
+# Plot clustered upper triangle with smaller labels
+corrplot(
+  cor_mat, 
+  method = "color", 
+  type = "upper", 
+  order = "hclust",    # Hierarchical clustering for grouping
+  tl.cex = 0.1,        # Shrink text size for 100+ labels
+  sig.level = 0.05
+)
 ```
 
 The data set contains 14,575 rows and 484 columns. Each row represents one fish and it's measurement for a single "ping". A "ping" refers to a time the fish hydroacoustic signal was measured and stored in the dataset. Since multiple signals were recorded for a single fish, there are several rows corresponding the same fish (e.g. there are multiple rows for LT001; Lake Trout fish number one, because multiple measures were taken for this single fish). From now on, we call rows "pings", to familiarize ourselves with how the data was being collected.
