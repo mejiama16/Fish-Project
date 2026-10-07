@@ -78,6 +78,20 @@
 \def\fps@figure{htbp}
 \makeatother
 
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{wrapfig}
+\usepackage{float}
+\usepackage{colortbl}
+\usepackage{pdflscape}
+\usepackage{tabu}
+\usepackage{threeparttable}
+\usepackage{threeparttablex}
+\usepackage[normalem]{ulem}
+\usepackage{makecell}
+\usepackage{xcolor}
 \KOMAoption{captions}{tableheading}
 \makeatletter
 \makeatother
@@ -155,14 +169,14 @@ was retrieved from the
 \href{https://github.com/WidebandPingFest/FishTetherExperiment}{Fish
 Tether Experiment GitHub Repository}.}}
 \author{Mariana Garcia Mejia}
-\date{September 30, 2026}
+\date{October 6, 2026}
 
 \begin{document}
 \maketitle
 \begin{abstract}
 Description of methods and main findings
 \end{abstract}
-\ifdefined\Shaded\renewenvironment{Shaded}{\begin{tcolorbox}[boxrule=0pt, sharp corners, breakable, enhanced, frame hidden, interior hidden, borderline west={3pt}{0pt}{shadecolor}]}{\end{tcolorbox}}\fi
+\ifdefined\Shaded\renewenvironment{Shaded}{\begin{tcolorbox}[interior hidden, borderline west={3pt}{0pt}{shadecolor}, boxrule=0pt, frame hidden, breakable, sharp corners, enhanced]}{\end{tcolorbox}}\fi
 
 \hypertarget{sec-introduction}{%
 \section{Introduction}\label{sec-introduction}}
@@ -180,20 +194,15 @@ the data structure challenges and classification tasks.
 \hypertarget{sec-data}{%
 \section{Data}\label{sec-data}}
 
-\begin{verbatim}
-corrplot 0.95 loaded
-\end{verbatim}
-
-\includegraphics{paper_files/figure-pdf/unnamed-chunk-3-1.pdf}
-
-The data set contains 14,575 rows and 484 columns. Each row represents
-one fish and it's measurement for a single ``ping''. A ``ping'' refers
-to a time the fish hydroacoustic signal was measured and stored in the
-dataset. Since multiple signals were recorded for a single fish, there
-are several rows corresponding the same fish (e.g.~there are multiple
-rows for LT001; Lake Trout fish number one, because multiple measures
-were taken for this single fish). From now on, we call rows ``pings'',
-to familiarize ourselves with how the data was being collected.
+The data set contains \textbf{14,575 rows} and 484 columns. Each row
+represents one fish and it's measurement for a single ``ping''. A
+``ping'' refers to a time the fish hydroacoustic signal was measured and
+stored in the dataset. Since multiple signals were recorded for a single
+fish, there are several rows corresponding the same fish (e.g.~there are
+multiple rows for LT001; Lake Trout fish number one, because multiple
+measures were taken for this single fish). From now on, we call rows
+``pings'', to familiarize ourselves with how the data was being
+collected.
 
 The dataset contains information for three fish species: Lake Trout
 (LT), Lake Whitefish (LW) and Smallmouth Bass (SMB).
@@ -268,13 +277,16 @@ we make decisions throughout the process. In particular, the rows in
 this data do not represent single instances or observations, rather,
 each represents an instance of a subject in time; a measurement taken
 from a fish. As a result, it is possible for measurements obtained in
-this instances, although different may be highly correlated, as they
-come from a similar procedure done on a same subject multiple times. For
-instance, the rows 1-65 in the raw data set correspond to LT001, Lake
-Trout fish number one. Because all hydroacoustic signals are taken from
-this single fish, just at different points in time, it is possible for
-these to vary very little from measurement to measurement, resulting in
-highly correlated variables.
+these instances, although different, may be highly correlated as they
+come from the same fish. For instance, the rows 1-65 in the raw data set
+correspond to LT001, Lake Trout fish number one. Because all
+hydroacoustic signals are taken from this single fish, just at different
+points in time, it is possible for these to vary very little from
+measurement to measurement, resulting in highly correlated observations.
+Additionally, this feature of the data likely violates the assumption of
+independence of observations, that must hold from the simplest models
+(OLS regression) to the most complex models in machine learning. We are
+aware of this violation and consider its implications accordingly.
 
 Now, one might think that the solution is to constraint our data set and
 analysis to just the 44 individual fish, by randomly selecting one of
@@ -294,23 +306,25 @@ overestimation of the model's actual capacity.
 
 This paper will touch on some of the decisions we must make when
 building models using this kind of data, and compare across them. We
-will do so in the context of feature engineering: deciding which
-features or variables are the most informative in the classification
-task. That is, given all the signals we have available for a new,
-unknown fish, which of these signals are the most likely to help us
-decide whether this fish is a Lake Trout, a Lake Whitefish or a
-Smallmouth Bass.
+will do so in the context of dimensionality reduction and feature
+engineering. In particular, we want to get information regarding which
+features are the most informative in the classification task. That is,
+given all the signals we have available for a new, unknown fish, which
+of these signals are the most likely to help us decide whether this fish
+is a Lake Trout, a Lake Whitefish or a Smallmouth Bass.
 
-\hypertarget{exploratory-data-analysis}{%
-\subsection{Exploratory data analysis}\label{exploratory-data-analysis}}
+\hypertarget{time-series-component}{%
+\subsection{Time Series Component}\label{time-series-component}}
 
-Before jumping into the methods by which we will perform feature
-engineering. It is important to better understand other characteristics
-of the data. First, the data contains a time series component. The pings
-for each fish at taken at different times throughout a period of time,
-no two pings happen simultaneously. Hence, it is of interest to also
-understand this characteristic of our data that may also shape our
-upcoming decisions.
+Before jumping into the methods it is important to better understand
+other characteristics of the data. First, the data contains a time
+series component. The pings for each fish are taken at different times
+throughout a period of time, no two pings happen simultaneously.
+Table~\ref{tbl-data-time} shows that the data was collected in the span
+of a week, with SMB having data collected in a much shorter period of
+time. Note that the data set included other dates, for example
+\texttt{processedDate}, however we keep \texttt{sampleDate} to reflect
+the time the measurement was taken.
 
 \hypertarget{tbl-data-time}{}
 \begin{longtable}[]{@{}lcc@{}}
@@ -331,122 +345,149 @@ LW & 2022-07-23 & 2022-07-28 \\
 SMB & 2022-07-26 & 2022-07-28 \\
 \end{longtable}
 
-Table~\ref{tbl-data-time} shows that the data was collected in the span
-of a week, with SMB having data collected in a much shorter period of
-time. Note that the data set included other dates, for example
-\texttt{processedDate}, however we keep \texttt{sampleDate} to reflect
-the time the measurement was taken.
-
 As mentioned earlier, the data set contains a total of 484 columns, out
-of which \textbf{426 are hydro acoustic signals} or frequencies. The
-rest contains species, unique identifier for the fish and other
-variables like sex, air bladder weight, tissue sample, length, among
-others. It is possible that these measures where taken via more
-aggressive methods, as a result, our analysis focuses on just the hydro
-acoustic signals, as a form to explore non-lethal methods to deal with
-species classification and problems adjacent to it.
+of which 426 are hydro acoustic signals or frequencies. The frequencies
+go from F45 to F260, and they increase by 0.5. The other 58 columns
+contain information such as species, unique identifier for the fish and
+physical characteristics like sex, air bladder weight, tissue sample,
+length, among others. It is possible that these measures where taken via
+more aggressive methods; our analysis focuses on just the hydro acoustic
+signals, as a form to explore non-lethal methods to deal with species
+classification and problems adjacent to it.
 
-These values range from roughly -20 to -105, they particularly appear as
-negative.
+For the purpose of this paper, we do not focus on the temporal data
+aspect of this problem, though it is possible to start training models
+based on this particular attribute of the data set. We leave this aspect
+to be explored in future research.
 
-\hypertarget{analysis-of-one-species-lake-trout}{%
-\subsection{Analysis of one species: Lake
-Trout}\label{analysis-of-one-species-lake-trout}}
+\hypertarget{missing-values}{%
+\subsection{Missing Values}\label{missing-values}}
 
-In this following section, we explore the different variables available
-in the data set for the Lake Trout species.
+\hypertarget{tbl-missing-values}{}
+\begin{longtable}[]{@{}lrrr@{}}
+\caption{\label{tbl-missing-values}Missing frequencies in the
+dataset}\tabularnewline
+\toprule\noalign{}
+Species & F90-F170 & F173-F260 & Rows with any missing \\
+\midrule\noalign{}
+\endfirsthead
+\toprule\noalign{}
+Species & F90-F170 & F173-F260 & Rows with any missing \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+LT & 2,964 & 183 & 3,147 \\
+LW & 789 & 0 & 789 \\
+SMB & 306 & 0 & 306 \\
+Total & 4,059 & 183 & 4,242 \\
+\end{longtable}
 
-\begin{table}
+As observed in Table~\ref{tbl-missing-values}, our data set has 4,242
+rows with missing values, most of which come from the Lake Trout species
+which is also the species for which the most data was collected. It is
+possible that some of these values are missing at random; for example,
+the part of the machine that gathered those frequencies was not working
+that day. While some imputation methods were considered to replace
+missing values, given the small number of fish in the sample, the
+consequences of imputing missing values are unknown, and specially when
+focusing on dimensionality reduction we want to avoid introducing more
+noise than there already is to perceive signals clearly. Consequently,
+we drop any rows that have missing values in the frequencies (4,242 in
+total).
 
-\caption{\textbf{?(caption)}}\begin{minipage}[t]{\linewidth}
+After removing rows with missing frequencies, the resulting data set
+contains 10,333 rows. Table~\ref{tbl-data-overview-clean} shows the
+resulting data set. The number of LT fish is reduced by half. Based on
+these results, the initial dimensionality reduction will be performed in
+a binary classification setting between Lake Trout (LT) and Lake
+Whitefish (LW), given that they are the classes with the most pings
+(4,101 and 3,496), compared to Smallmouth Bass (2,736).
 
-{\centering 
-
-\raisebox{-\height}{
-
-\includegraphics{paper_files/figure-pdf/tbl-frequency-variation-1.pdf}
-
-}
-
-}
-
-\end{minipage}%
-
-\end{table}
-
-\textbf{?@tbl-frequency-variation} demonstrates significant variation in
-signals F45, F55, F65 across different pings for the same fish, LT001.
-However, it is difficult to see how the time component is present.
-
-\includegraphics{paper_files/figure-pdf/unnamed-chunk-7-1.pdf}
-
-\includegraphics{paper_files/figure-pdf/unnamed-chunk-8-1.pdf}
-
-\includegraphics{paper_files/figure-pdf/unnamed-chunk-9-1.pdf}
-
-\begin{verbatim}
-# A tibble: 2 x 2
-  n_missing common_missing
-      <dbl>          <int>
-1       183            175
-2      4059            161
-\end{verbatim}
-
-Missing values: 161 frequencies are missing for 4,059 pings/rows and 175
-frequencies are missing for 183 pings/rows. Since the information is
-missing just for some observations rather than for entire columns,
-dropping them could mean losing information. From F173-F260 there are
-183 missing for each and from F90-F170 we are missing 4059 for each.
-
-\begin{verbatim}
-# A tibble: 336 x 3
-   col   n_missing pct_missing
-   <chr>     <dbl>       <dbl>
- 1 F90        4059        27.8
- 2 F90.5      4059        27.8
- 3 F91        4059        27.8
- 4 F91.5      4059        27.8
- 5 F92        4059        27.8
- 6 F92.5      4059        27.8
- 7 F93        4059        27.8
- 8 F93.5      4059        27.8
- 9 F94        4059        27.8
-10 F94.5      4059        27.8
-# i 326 more rows
-\end{verbatim}
-
-\includegraphics{paper_files/figure-pdf/unnamed-chunk-12-1.pdf}
-
-\begin{verbatim}
-# A tibble: 3 x 3
-  species        `F173–F260` `F90–F170`
-  <chr>                <int>      <int>
-1 lakeTrout            32025     477204
-2 lakeWhitefish            0     127029
-3 smallmouthBass           0      49266
-\end{verbatim}
+\hypertarget{tbl-data-overview-clean}{}
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 10\tabcolsep) * \real{0.1067}}
+  >{\centering\arraybackslash}p{(\columnwidth - 10\tabcolsep) * \real{0.2133}}
+  >{\centering\arraybackslash}p{(\columnwidth - 10\tabcolsep) * \real{0.1733}}
+  >{\centering\arraybackslash}p{(\columnwidth - 10\tabcolsep) * \real{0.1867}}
+  >{\centering\arraybackslash}p{(\columnwidth - 10\tabcolsep) * \real{0.1600}}
+  >{\centering\arraybackslash}p{(\columnwidth - 10\tabcolsep) * \real{0.1600}}@{}}
+\caption{\label{tbl-data-overview-clean}Overview of the dataset with no
+missing values}\tabularnewline
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Species
+\end{minipage} & \begin{minipage}[b]{\linewidth}\centering
+Number of fish
+\end{minipage} & \begin{minipage}[b]{\linewidth}\centering
+Total pings
+\end{minipage} & \begin{minipage}[b]{\linewidth}\centering
+Median pings
+\end{minipage} & \begin{minipage}[b]{\linewidth}\centering
+Min. pings
+\end{minipage} & \begin{minipage}[b]{\linewidth}\centering
+Max. pings
+\end{minipage} \\
+\midrule\noalign{}
+\endfirsthead
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Species
+\end{minipage} & \begin{minipage}[b]{\linewidth}\centering
+Number of fish
+\end{minipage} & \begin{minipage}[b]{\linewidth}\centering
+Total pings
+\end{minipage} & \begin{minipage}[b]{\linewidth}\centering
+Median pings
+\end{minipage} & \begin{minipage}[b]{\linewidth}\centering
+Min. pings
+\end{minipage} & \begin{minipage}[b]{\linewidth}\centering
+Max. pings
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+LT & 12 & 4,101 & 189.5 & 16 & 1,379 \\
+LW & 8 & 3,496 & 312.0 & 96 & 1,619 \\
+SMB & 10 & 2,736 & 210.0 & 25 & 1,071 \\
+\end{longtable}
 
 \hypertarget{methods}{%
 \section{Methods}\label{methods}}
 
-\hypertarget{variance-filtering}{%
-\subsection{Variance filtering}\label{variance-filtering}}
+In the following section we attempt several techniques for variable
+selection (i.e.~dimensionality reduction). We start with some
+regularization techniques, which fit a model containing all p predictors
+that constraints the coefficient estimates in such way that shrinks them
+towards zero. We attempt the common Lasso regularization and a new
+variation of Lasso, known as Whitening Lasso or WLasso, which serves in
+context high-dimensional, highly correlated data. We then explore more
+complex methods like PCA, random forest and boosting.
 
-\includegraphics{paper_files/figure-pdf/unnamed-chunk-14-1.pdf}
+\hypertarget{lasso-regularization}{%
+\subsection{Lasso Regularization}\label{lasso-regularization}}
 
-\hypertarget{pca}{%
-\subsection{PCA}\label{pca}}
-
-Before doing PCA. Questions: 1. What to do about missing values? Missing
-for some fish, not for others. 2. I don't think using all 14,000 will be
-too informative. Should we average all the variables for a single fish?
-I'm not sure how to use this.
+Lasso regularization is a type of shrinkage regression that employs the
+l1 penalty. This has the effect of forcing some coefficients to be
+exactly zero when the tuning parameter λ is sufficiently large. As a
+result of its construction, lasso returns a more sparse model, which
+allows for variable selection and greater interpretability.
 
 \hypertarget{results}{%
 \section{Results}\label{results}}
 
 \hypertarget{discussion}{%
 \section{Discussion}\label{discussion}}
+
+\hypertarget{sec-appendix-a}{%
+\section{Appendix}\label{sec-appendix-a}}
+
+\setcounter{figure}{0}
+\renewcommand{\thefigure}{A\arabic{figure}}
+
+\setcounter{table}{0}
+\renewcommand{\thetable}{A\arabic{table}}
 
 
 
