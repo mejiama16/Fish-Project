@@ -169,14 +169,14 @@ was retrieved from the
 \href{https://github.com/WidebandPingFest/FishTetherExperiment}{Fish
 Tether Experiment GitHub Repository}.}}
 \author{Mariana Garcia Mejia}
-\date{October 6, 2026}
+\date{October 7, 2026}
 
 \begin{document}
 \maketitle
 \begin{abstract}
 Description of methods and main findings
 \end{abstract}
-\ifdefined\Shaded\renewenvironment{Shaded}{\begin{tcolorbox}[interior hidden, borderline west={3pt}{0pt}{shadecolor}, boxrule=0pt, frame hidden, breakable, sharp corners, enhanced]}{\end{tcolorbox}}\fi
+\ifdefined\Shaded\renewenvironment{Shaded}{\begin{tcolorbox}[interior hidden, frame hidden, breakable, borderline west={3pt}{0pt}{shadecolor}, sharp corners, boxrule=0pt, enhanced]}{\end{tcolorbox}}\fi
 
 \hypertarget{sec-introduction}{%
 \section{Introduction}\label{sec-introduction}}
@@ -470,9 +470,47 @@ complex methods like PCA, random forest and boosting.
 
 Lasso regularization is a type of shrinkage regression that employs the
 l1 penalty. This has the effect of forcing some coefficients to be
-exactly zero when the tuning parameter λ is sufficiently large. As a
-result of its construction, lasso returns a more sparse model, which
-allows for variable selection and greater interpretability.
+exactly zero when the tuning parameter \(λ\) is sufficiently large. As a
+result of its construction, lasso returns a sparse model, which allows
+for variable selection and greater interpretability. Note that since we
+are focusing on a binary classification problem, we use the Lasso
+penalty with logistic regression instead of linear regression.
+
+The first important consideration before fitting the model is how to
+split the data into test, train and validation. We need one set to train
+the initial model, one validation set to find the penalty \(λ\) that
+minimizes mean squared error and one test set to evaluate the
+performance of the final model, on new, unseen data. To pick the optimal
+\(λ\), we use cross-validation.The main drawback is that aren't getting
+the best possible model in the first fitting round because we are not
+using all of the data, however this provides the best way to tune the
+parameter so we will proceed and evaluate overall model performance only
+using the test data.
+
+It is clear that this split has to be done by fish, rather than by pings
+because otherwise our model would be exposed to a risk of data leakage.
+In other words, we may train the model on observations that are also in
+the test set (for example, if they come from the same fish), resulting
+in an overestimation of the model's performance. Doing the splits by
+fish ensures there is no data leakage introduced by our procedure,
+however it does limit us because we only have 20 fish in total after the
+data cleaning (12 LT and 8 LW). Adding to this, different fish do not
+have the same number of pings (total rows), as a result, and while some
+individual fish may have over 1000 pings, some may have as little as 16.
+If selecting via random sampling there is a possibility that the test
+set will end up with more total observations than the training set,
+which is not ideal as we always hope to train the model on the largest
+portion of data.
+
+To overcome these issues, we attempt two methods: 1)
+train/validation/test split with stratified random sampling and 2)
+leave-one-fish-out. For the first method, we split the 20 fishes into 10
+in the training set, 4 in the validation set and 6 in the testing set.
+For the second method, we use leave-one-out cross validation. This
+allows us to use most of the data in the training run and just one or
+two observations in the validation run. However, in this case we train
+the model multiple times and tune the parameter multiple times, and at
+the end we aggregate the results to obtain\ldots{}
 
 \hypertarget{results}{%
 \section{Results}\label{results}}
