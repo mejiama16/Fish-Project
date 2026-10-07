@@ -1,5 +1,5 @@
 #### Preamble ####
-# Purpose: Cleans the data - mainly removes missing values and standardizes
+# Purpose: Cleans the data - mainly removes missing values
 # Author: Mariana Garcia Mejia
 # Date: 6 October 2026
 # Contact: mariana.garcia@mail.utoronto.ca
