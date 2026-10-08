@@ -169,14 +169,14 @@ was retrieved from the
 \href{https://github.com/WidebandPingFest/FishTetherExperiment}{Fish
 Tether Experiment GitHub Repository}.}}
 \author{Mariana Garcia Mejia}
-\date{October 7, 2026}
+\date{October 8, 2026}
 
 \begin{document}
 \maketitle
 \begin{abstract}
 Description of methods and main findings
 \end{abstract}
-\ifdefined\Shaded\renewenvironment{Shaded}{\begin{tcolorbox}[interior hidden, frame hidden, breakable, borderline west={3pt}{0pt}{shadecolor}, sharp corners, boxrule=0pt, enhanced]}{\end{tcolorbox}}\fi
+\ifdefined\Shaded\renewenvironment{Shaded}{\begin{tcolorbox}[boxrule=0pt, breakable, frame hidden, borderline west={3pt}{0pt}{shadecolor}, enhanced, interior hidden, sharp corners]}{\end{tcolorbox}}\fi
 
 \hypertarget{sec-introduction}{%
 \section{Introduction}\label{sec-introduction}}
@@ -456,61 +456,109 @@ SMB & 10 & 2,736 & 210.0 & 25 & 1,071 \\
 \hypertarget{methods}{%
 \section{Methods}\label{methods}}
 
-In the following section we attempt several techniques for variable
-selection (i.e.~dimensionality reduction). We start with some
-regularization techniques, which fit a model containing all p predictors
-that constraints the coefficient estimates in such way that shrinks them
-towards zero. We attempt the common Lasso regularization and a new
-variation of Lasso, known as Whitening Lasso or WLasso, which serves in
-context high-dimensional, highly correlated data. We then explore more
-complex methods like PCA, random forest and boosting.
+In this section we compare several techniques for variable selection and
+dimensionality reduction. We begin with regularization methods, which
+fit a model containing all \(p\) predictors while constraining the
+coefficient estimates, shrinking them towards zero. We use the standard
+Lasso and a recent variant, the Whitening Lasso (WLasso), designed for
+high-dimensional data with highly correlated predictors. We then
+consider PCA, random forests and boosting.
 
 \hypertarget{lasso-regularization}{%
 \subsection{Lasso Regularization}\label{lasso-regularization}}
 
-Lasso regularization is a type of shrinkage regression that employs the
-l1 penalty. This has the effect of forcing some coefficients to be
-exactly zero when the tuning parameter \(λ\) is sufficiently large. As a
-result of its construction, lasso returns a sparse model, which allows
-for variable selection and greater interpretability. Note that since we
-are focusing on a binary classification problem, we use the Lasso
-penalty with logistic regression instead of linear regression.
+Lasso is a shrinkage method that adds an \(\ell_1\) penalty to the
+model's loss function. When the tuning parameter \(\lambda\) is
+sufficiently large, some coefficients are set exactly to zero, so Lasso
+returns a sparse model that performs variable selection and is easier to
+interpret. Because our response is binary (Lake trout vs.~Lake
+whitefish), we use Lasso with logistic regression. Writing \(y_i = 1\)
+for lake trout, \(x_i\) for the vector of standardized frequencies of
+ping \(i\), and \(w_i\) for its weight, the coefficients are estimated
+by
 
-The first important consideration before fitting the model is how to
-split the data into test, train and validation. We need one set to train
-the initial model, one validation set to find the penalty \(λ\) that
-minimizes mean squared error and one test set to evaluate the
-performance of the final model, on new, unseen data. To pick the optimal
-\(λ\), we use cross-validation.The main drawback is that aren't getting
-the best possible model in the first fitting round because we are not
-using all of the data, however this provides the best way to tune the
-parameter so we will proceed and evaluate overall model performance only
-using the test data.
+\[
+\hat{\beta} = \arg\min_{\beta_0,\beta}\; -\frac{1}{n}\sum_{i=1}^{n} w_i\Big[y_i(\beta_0 + x_i^\top\beta) - \log\big(1 + e^{\beta_0 + x_i^\top\beta}\big)\Big] + \lambda \sum_{j=1}^{p}|\beta_j| .
+\]
 
-It is clear that this split has to be done by fish, rather than by pings
-because otherwise our model would be exposed to a risk of data leakage.
-In other words, we may train the model on observations that are also in
-the test set (for example, if they come from the same fish), resulting
-in an overestimation of the model's performance. Doing the splits by
-fish ensures there is no data leakage introduced by our procedure,
-however it does limit us because we only have 20 fish in total after the
-data cleaning (12 LT and 8 LW). Adding to this, different fish do not
-have the same number of pings (total rows), as a result, and while some
-individual fish may have over 1000 pings, some may have as little as 16.
-If selecting via random sampling there is a possibility that the test
-set will end up with more total observations than the training set,
-which is not ideal as we always hope to train the model on the largest
-portion of data.
+Larger values of \(\lambda\) shrink more coefficients to zero, while
+\(\lambda = 0\) recovers ordinary logistic regression. The intercept is
+not penalized.
 
-To overcome these issues, we attempt two methods: 1)
-train/validation/test split with stratified random sampling and 2)
-leave-one-fish-out. For the first method, we split the 20 fishes into 10
-in the training set, 4 in the validation set and 6 in the testing set.
-For the second method, we use leave-one-out cross validation. This
-allows us to use most of the data in the training run and just one or
-two observations in the validation run. However, in this case we train
-the model multiple times and tune the parameter multiple times, and at
-the end we aggregate the results to obtain\ldots{}
+\textbf{Preprocessing.} Each frequency was standardized to mean zero and
+unit variance, as common practice when using Lasso regularization. The
+means and standard deviations were computed on the training data only
+and then applied to the test data, so that no information from the test
+set would enter the model fitting. Additionally, classes differ in the
+number of fish, and also each fish differs in its number of pings. To
+prevent fish with many pings (and the larger class) from dominating the
+fit, each ping received a weight inversely proportional to the number of
+pings of its fish and to the number of fish in its class, rescaled to
+average one. This scheme is know as weighted logistic regression, with
+it each fish contributes equally within its class, and the two classes
+contribute equally to each other. This helps prevent the model from
+simply guessing the majority class to achieve a higher accuracy, instead
+we penalize mistakes in classifying the lower represented class more to
+account for the fact that the class is underrepresented.
+
+\textbf{Data splitting and evaluation.} Pings from the same fish are not
+independent, so all splitting was done by fish rather than by ping.
+Splitting by ping would place pings of the same individual in both the
+training and test data, which constitutes data leakage and overestimates
+performance. After removing pings with missing values in the F90--F260
+bands, 20 fish remained (12 lake trout and 8 lake whitefish), out of the
+original 32. The number of pings per fish varies widely (from 16 to
+1,619), so the number of pings in any subset cannot be controlled
+directly. For this reason we report fish-level and balanced accuracy in
+addition to ping-level accuracy.
+
+First, 4 fish (2 lake trout and 2 lake whitefish) were randomly set
+aside as a test set (seed = 16). They were not used for fitting or
+tuning, and they are evaluated once, at the end. The same test fish are
+used for every method in this study (Lasso, WLasso, random forest,
+boosting), which allows a direct comparison of their performance on the
+same unseen individuals.
+
+The remaining 16 fish (10 lake trout and 6 lake whitefish) form the
+development set. They were randomly divided into \(K=4\) folds of 4
+fish, with species spread as evenly as possible so that each fold
+contains both species. The penalty \(\lambda\) was chosen by \(K\)-fold
+cross-validation: for each fold, the model was fitted on the other three
+folds along a grid of \(\lambda\) values and the held-out fold was
+scored, and the scores were averaged across folds. Folds were formed
+from whole fish, so no individual appears in both the fitting and the
+scoring data. We used the binomial deviance as the cross-validation
+criterion, because, unlike accuracy, it evaluates the predicted
+probabilities to gauge model confidence as opposed to accuracy. We
+considered both the value of \(\lambda\) with the lowest cross-validated
+error (\(\lambda_{\min}\)) and the largest value within one standard
+error of the minimum (\(\lambda_{1\mathrm{SE}}\)). The final model was
+then refitted on all 16 development fish with the chosen \(\lambda\) and
+evaluated once on the 4 test fish.
+
+\emph{The fish-level classification was obtained by averaging the
+predicted probabilities of lake trout over a fish's pings, with a
+threshold of 0.5. This is mainly because the fish is the real unit: for
+every ping, the model outputs a probability that it came from a lake
+trout. A single fish has hundreds or thousands of pings, so we get
+hundreds or thousands of probabilities for that fish. To get one answer
+per fish, we average them, and if the average is above 0.5 we call the
+fish a lake trout, otherwise a whitefish.}
+
+\textbf{Rationale.} A single train/validation/test split would leave
+very few fish for each purpose, and cross-validation on the development
+fish makes use of all 16 for both fitting and tuning. We chose \(K=4\)
+so that every fold contains several fish of both species, while each
+model is still fitted on 12 of the 16 fish. A fixed test set, identical
+for all methods, was kept so that the final comparison between methods
+is made on data that played no role in tuning or model selection.
+
+\textbf{Limitations.} With 20 fish in total, all performance estimates
+are uncertain. The test set contains only 4 fish, so fish-level accuracy
+can only take the values 0, 25, 50, 75 or 100\%, and the number of pings
+differs greatly between its two species. Test results should therefore
+be interpreted together with the cross-validated results, not on their
+own.
 
 \hypertarget{results}{%
 \section{Results}\label{results}}
