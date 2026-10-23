@@ -1,0 +1,168 @@
+---
+title: "Reproducing WLasso on breast cancer gene expression data"
+author: Mariana Garcia Mejia
+date: today
+date-format: long
+format:
+  pdf:
+    keep-tex: true
+    number-sections: true
+    toc: false
+---
+
+## Reproducing WLasso on breast cancer gene expression data (GSE2990)
+
+### Data and preprocessing
+We use data from the [Gene Expression Omnibus](https://www.ncbi.nlm.nih.gov/geo/) with GEO Accession GSE2990 as used by the authors (Zhu et al., 2020) of the paper [A variable selection approach for highly correlated predictors in high-dimensional genomic data](https://doi.org/10.1093/bioinformatics/btab114). The data contains $n = 189$ tumours and 22,283 probes (HG-U133A array: chip to measure human gene expression). The values range from 2.66 to 15.13, which is consistent with RMA-normalised data, meaning that the data is already processed.
+
+```{r}
+# Load the gene data from Gene Expression Omnibus
+expr <- read.delim("GSE2990_series_matrix.txt",
+                   comment.char = "!", row.names = 1)
+dim(expr)
+
+# Values appear to be normalized (between 2 and 15).
+range(as.matrix(expr), na.rm = TRUE)
+```
+
+
+As in Zhu et al. (2021), we kept probes with IQR $\geq 1.5$ (1,155 probes) and removed probes without a gene annotation (49 removed, 1,106 left). 
+```{r, warning=FALSE, message=FALSE}
+# First cleaning step: remove probes with IQR < 1.5
+iqr_values <- apply(expr, 1, IQR)
+# summary(iqr_values)
+keep <- iqr_values >= 1.5
+# sum(keep)
+expr_filt <- expr[keep, ]
+# dim(expr_filt)
+
+# Second step: Remove genes without gene annotation
+# BiocManager::install("hgu133a.db")
+library(hgu133a.db)
+
+probe_ids <- rownames(expr_filt)
+symbols <- mapIds(hgu133a.db,
+                  keys = probe_ids,
+                  column = "SYMBOL",
+                  keytype = "PROBEID",
+                  multiVals = "first")
+
+# sum(is.na(symbols))
+
+# Remove
+has_symbol <- !is.na(symbols)
+expr_ann <- expr_filt[has_symbol, ]
+symbols_ann <- symbols[has_symbol]
+
+dim(expr_ann)
+```
+
+
+The ESR1 probe is a gene associated with breast cancer. We use it as the response $y$ and the remaining 1,105 probes as predictors $X$. As is convention in implementing Lasso regularizaiton, we standardized each predictor. We also mean-centred $y$. The paper reports $p = 1{,}111$, so our probe set differs slightly, $p = 1{,}106$.
+
+```{r, warning=FALSE, message=FALSE}
+# Use ESR1 gene as the gene to predict.
+all_symbols <- mapIds(hgu133a.db,
+                      keys = rownames(expr),
+                      column = "SYMBOL",
+                      keytype = "PROBEID",
+                      multiVals = "first")
+
+esr1_probes <- names(all_symbols)[all_symbols %in% "ESR1"]
+# esr1_probes
+# esr1_probes %in% rownames(expr_ann)
+
+# Pull the ESR Variable left after IQR + Annotation filter and use as y
+esr1_probe <- esr1_probes[1]
+# esr1_probe
+y <- as.numeric(expr_ann[esr1_probe, ])
+expr_X <- expr_ann[rownames(expr_ann) != esr1_probe, ]
+
+# length(y)
+# dim(expr_X)
+
+# Standardize X.
+X <- scale(t(expr_X))
+# dim(X)
+# round(colMeans(X)[1:3], 6)
+# apply(X, 2, sd)[1:3]
+
+# Mean-center Y.
+y_c <- y - mean(y)
+# mean(y_c) # should be close to zero.
+```
+
+
+### Method
+The model is $y = X\beta + \epsilon$ with $\mathrm{Cor}(X) = \Sigma$. WLasso whitens the predictors with $\tilde{X} = X\Sigma^{-1/2}$, so that $y = \tilde{X}\tilde\beta + \epsilon$ with $\tilde\beta = \Sigma^{1/2}\beta$, and the error term is unchanged. It then minimises the generalised Lasso criterion
+$$\|y - \tilde{X}\tilde\beta\|_2^2 + \lambda \|\Sigma^{-1/2}\tilde\beta\|_1,$$
+and thresholds the estimates to the top $K$ (for $\tilde\beta$) and top $M$ (for $\beta$) coefficients, with $K$ and $M$ chosen by an MSE-ratio rule controlled by $\gamma$. $\Sigma$ was estimated with the two-block structure of Section 2.5: $(\hat\alpha_1,\hat\alpha_2,\hat\alpha_3) = (0.19, 0.27, 0.55)$, against $(0.17, 0.21, 0.52)$ in the paper.
+
+### A problem with the package and our patch
+With the `WLasso` package (v1.0), `Whitening_Lasso()` returned an empty model on these data (the lowest MSE was at the first, all-zero step), although a plain Lasso on the same data selected 61 probes. The package works on its own example data and on simulated data of our size ($n = 189$, $p = 1105$). Reading the source, in the step that chooses $M$, the MSE is computed from the coefficients sorted by absolute value, not from the coefficients in their original order, so each coefficient multiplies the wrong column of $X$. We think this is a bug that does little harm when all correlations are positive, as in the paper's simulations. We changed that one argument in a copy of the function (not an official fix, and not confirmed with the authors), and results below come from that modified copy.
+
+```{r, warning=FALSE}
+# Install WLasso package
+# install.packages("WLasso")
+library(WLasso)
+# help(package = "WLasso")
+```
+
+```{r}
+# Step 1: Sigma Estimation
+Sigma_est <- Sigma_Estimation(X)
+round(Sigma_est$alpha, 2) # paper reports 0.17, 0.21 and 0.52, we get slightly different
+# We get: 0.19 0.27 0.55
+
+# Number of probes the clustering put into one of the two blocks
+# We get 181 out of 1105
+length(Sigma_est$group_act)
+
+# Step 2: Model transformation
+Sigma_estmat <- Sigma_est$mat
+```
+
+```{r}
+# Fix bug on the paper
+src <- paste(deparse(WLasso::Whitening_Lasso), collapse = "\n")
+src2 <- gsub("x\\s*=\\s*beta_sort,\\s*sorted_vect\\s*=\\s*beta_sort",
+             "x = beta_final0, sorted_vect = beta_sort", src)
+
+# identical(src, src2)   # we want FALSE this time
+
+WL_fixed <- eval(parse(text = src2))
+environment(WL_fixed) <- asNamespace("WLasso")
+# grep("beta_sort", strsplit(src, "\n")[[1]], value = TRUE)
+# grep("beta_interm", strsplit(src2, "\n")[[1]], value = TRUE)
+```
+
+```{r}
+# Fit the model
+# mod_fix <- WL_fixed(X = X, Y = y_c, Sigma = Sigma_estmat,
+                    # gamma = 0.95, maxsteps = 500)
+
+# range(mod_fix$mse)
+# sum(mod_fix$beta.min != 0)
+```
+
+```{r}
+# We also fit regular Lasso for comparison:
+#install.packages("glmnet")
+library(glmnet)
+cvfit <- cv.glmnet(X, y_c)
+sum(coef(cvfit, s = "lambda.min")[-1] != 0)
+# returns 60 coefficients!!!!
+```
+
+### Results
+| Method | Probes | Genes |
+|---|---|---|
+| WLasso ($\gamma = 0.95$, patched) | 59 | 56 |
+| Lasso (cross-validation) | 62 | 59 |
+
+The paper reports 63 and 66 genes. The two methods share 38 genes in our run, against 8 in the paper. NAT1 and GATA3, both discussed in the paper, are selected by both methods. Varying $\gamma$ changes the size of the selection (42, 56 and 72 genes for $\gamma = 0.90, 0.95, 0.99$), but 36 genes are selected at all three values. Some genes discussed in the paper are unstable: TOP2A is selected at 0.90 and 0.99 but not at 0.95, and CXCL12 only at 0.99.
+
+### Limitations
+The true set of relevant genes is unknown, so this is an illustration, as in the paper, and cannot show that one method is better. We only checked stability with respect to $\gamma$, not $\hat\Sigma$ or the sample. The results rely on the patched function and the current annotation version.
+
+**Reference.** Zhu, W., Lévy-Leduc, C. and Ternès, N. (2021). A variable selection approach for highly correlated predictors in high-dimensional genomic data. *Bioinformatics*, 37(16), 2238–2244.
