@@ -190,11 +190,11 @@
 
 \title{Reproducing WLasso on breast cancer gene expression data}
 \author{Mariana Garcia Mejia}
-\date{October 22, 2026}
+\date{October 23, 2026}
 
 \begin{document}
 \maketitle
-\ifdefined\Shaded\renewenvironment{Shaded}{\begin{tcolorbox}[interior hidden, borderline west={3pt}{0pt}{shadecolor}, enhanced, sharp corners, boxrule=0pt, frame hidden, breakable]}{\end{tcolorbox}}\fi
+\ifdefined\Shaded\renewenvironment{Shaded}{\begin{tcolorbox}[frame hidden, boxrule=0pt, interior hidden, sharp corners, borderline west={3pt}{0pt}{shadecolor}, breakable, enhanced]}{\end{tcolorbox}}\fi
 
 \hypertarget{reproducing-wlasso-on-breast-cancer-gene-expression-data-gse2990}{%
 \subsection{Reproducing WLasso on breast cancer gene expression data
@@ -203,12 +203,15 @@
 \hypertarget{data-and-preprocessing}{%
 \subsubsection{Data and preprocessing}\label{data-and-preprocessing}}
 
-We use data from the Gene Expression Omnibus
-\href{https://www.ncbi.nlm.nih.gov/geo/}{Gene Expression Omnibus} with
-GEO Accession GSE2990 as used by the authors (Zhu et al., 2020). The
-data contains \(n = 189\) tumours and 22,283 probes (HG-U133A array).
-The values range from 2.66 to 15.13, which is consistent with
-RMA-normalised data.
+We use data from the \href{https://www.ncbi.nlm.nih.gov/geo/}{Gene
+Expression Omnibus} with GEO Accession GSE2990 as used by the authors
+(Zhu et al., 2020) of the paper
+\href{https://doi.org/10.1093/bioinformatics/btab114}{A variable
+selection approach for highly correlated predictors in high-dimensional
+genomic data}. The data contains \(n = 189\) tumours and 22,283 probes
+(HG-U133A array: chip to measure human gene expression). The values
+range from 2.66 to 15.13, which is consistent with RMA-normalised data,
+meaning that the data is already processed.
 
 \begin{Shaded}
 \begin{Highlighting}[]
@@ -275,11 +278,10 @@ left).
 \end{verbatim}
 
 The ESR1 probe is a gene associated with breast cancer. We use it as the
-response \(y\) and the remaining 1,105 probes as predictors \(X\). As
-with regular As is convention in Lasso, we standardised each predictor.
-We also centred \(y\), because the criterion has no intercept. The paper
-reports \(p = 1{,}111\), so our probe set differs slightly,
-\(p = 1{,}106\).
+response \(y\) and the remaining 1,105 probes as predictors \(X\). As is
+convention in implementing Lasso regularizaiton, we standardized each
+predictor. We also mean-centred \(y\). The paper reports
+\(p = 1{,}111\), so our probe set differs slightly, \(p = 1{,}106\).
 
 \begin{Shaded}
 \begin{Highlighting}[]
@@ -315,30 +317,6 @@ reports \(p = 1{,}111\), so our probe set differs slightly,
 \end{Highlighting}
 \end{Shaded}
 
-\hypertarget{what-the-gene-annotation-does}{%
-\subsubsection{What the gene annotation
-does}\label{what-the-gene-annotation-does}}
-
-Each column \(j \in \{1,\dots,p\}\) of \(X\) is a probe, and the array
-itself only knows probe IDs. An annotation is a lookup map \(g\) from
-probe indices to gene symbols (or to \(\mathrm{NA}\) when the probe has
-no known gene). We used the Bioconductor package \texttt{hgu133a.db} for
-this array. It never enters the estimation of \(\beta\), only the steps
-before and after:
-
-\begin{itemize}
-\tightlist
-\item
-  \textbf{Before:} we drop probes with \(g(j) = \mathrm{NA}\), and we
-  find the probe \(j^*\) with \(g(j^*) = \text{ESR1}\) to build
-  \(y = X_{j^*}\) and take it out of the predictors.
-\item
-  \textbf{After:} the method returns a support
-  \(\hat S = \{ j : \hat\beta_j \neq 0 \}\) of probes. The map turns it
-  into a list of genes \(g(\hat S)\). Several probes can map to the same
-  gene, so \(|g(\hat S)| \leq |\hat S|\).
-\end{itemize}
-
 \hypertarget{method}{%
 \subsubsection{Method}\label{method}}
 
@@ -351,10 +329,15 @@ then minimises the generalised Lasso criterion
 \[\|y - \tilde{X}\tilde\beta\|_2^2 + \lambda \|\Sigma^{-1/2}\tilde\beta\|_1,\]
 and thresholds the estimates to the top \(K\) (for \(\tilde\beta\)) and
 top \(M\) (for \(\beta\)) coefficients, with \(K\) and \(M\) chosen by
-an MSE-ratio rule controlled by \(\gamma\). \(\Sigma\) was estimated
-with the two-block structure of Section 2.5:
+an \textbf{MSE-ratio rule} controlled by \(\gamma\). \(\Sigma\) was
+estimated with the two-block structure of Section 2.5:
 \((\hat\alpha_1,\hat\alpha_2,\hat\alpha_3) = (0.19, 0.27, 0.55)\),
 against \((0.17, 0.21, 0.52)\) in the paper.
+
+The paremeters the model takes are \(\gamma\), which we set to 0.95
+(between 0.9 and 0.99 recommended by the paper), and max\_steps = 500
+(the paper does not find significance difference in performance between
+500 and 2000).
 
 \hypertarget{a-problem-with-the-package-and-our-patch}{%
 \subsubsection{A problem with the package and our
@@ -362,16 +345,16 @@ patch}\label{a-problem-with-the-package-and-our-patch}}
 
 With the \texttt{WLasso} package (v1.0), \texttt{Whitening\_Lasso()}
 returned an empty model on these data (the lowest MSE was at the first,
-all-zero step), although a plain Lasso on the same data selected 62
-probes. The package works on its own example data and on simulated data
-of our size (\(n = 189\), \(p = 1105\)). Reading the source, in the step
-that chooses \(M\), the MSE is computed from the coefficients sorted by
-absolute value, not from the coefficients in their original order, so
-each coefficient multiplies the wrong column of \(X\). We think this is
-a bug that does little harm when all correlations are positive, as in
-the paper's simulations. We changed that one argument in a copy of the
-function (not an official fix, and not confirmed with the authors), and
-results below come from that modified copy.
+all-zero step), although a plain Lasso on the same data selected 60
+probes. The package works on its own example data. I used Claude Code to
+help me identify the issue: using the source, in the step that chooses
+\(M\), the MSE is computed from the coefficients sorted by absolute
+value, not from the coefficients in their original order, so each
+coefficient multiplies the wrong column of \(X\). We think this is a bug
+that does little harm when all correlations are positive, as in the
+paper's simulations. We changed that one argument in a copy of the
+function (not an official fix), and results below come from that
+modified copy.
 
 \begin{Shaded}
 \begin{Highlighting}[]
@@ -446,47 +429,10 @@ results below come from that modified copy.
 \begin{Highlighting}[]
 \CommentTok{\# We also fit regular Lasso for comparison:}
 \CommentTok{\#install.packages("glmnet")}
-\FunctionTok{library}\NormalTok{(glmnet)}
-\end{Highlighting}
-\end{Shaded}
-
-\begin{verbatim}
-Warning: package 'glmnet' was built under R version 4.3.3
-\end{verbatim}
-
-\begin{verbatim}
-Loading required package: Matrix
-\end{verbatim}
-
-\begin{verbatim}
-
-Attaching package: 'Matrix'
-\end{verbatim}
-
-\begin{verbatim}
-The following object is masked from 'package:S4Vectors':
-
-    expand
-\end{verbatim}
-
-\begin{verbatim}
-Loaded glmnet 4.1-9
-\end{verbatim}
-
-\begin{Shaded}
-\begin{Highlighting}[]
-\NormalTok{cvfit }\OtherTok{\textless{}{-}} \FunctionTok{cv.glmnet}\NormalTok{(X, y\_c)}
-\FunctionTok{sum}\NormalTok{(}\FunctionTok{coef}\NormalTok{(cvfit, }\AttributeTok{s =} \StringTok{"lambda.min"}\NormalTok{)[}\SpecialCharTok{{-}}\DecValTok{1}\NormalTok{] }\SpecialCharTok{!=} \DecValTok{0}\NormalTok{)}
-\end{Highlighting}
-\end{Shaded}
-
-\begin{verbatim}
-[1] 60
-\end{verbatim}
-
-\begin{Shaded}
-\begin{Highlighting}[]
-\CommentTok{\# returns 61 coefficients!!!!}
+\CommentTok{\# library(glmnet)}
+\CommentTok{\# cvfit \textless{}{-} cv.glmnet(X, y\_c)}
+\CommentTok{\# sum(coef(cvfit, s = "lambda.min")[{-}1] != 0)}
+\CommentTok{\# returns 60 coefficients!!!!}
 \end{Highlighting}
 \end{Shaded}
 
@@ -501,25 +447,23 @@ Method & Probes & Genes \\
 \bottomrule\noalign{}
 \endlastfoot
 WLasso (\(\gamma = 0.95\), patched) & 59 & 56 \\
-Lasso (cross-validation) & 62 & 59 \\
+Lasso (cross-validation) & 60 & 59 \\
 \end{longtable}
 
-The paper reports 63 and 66 genes. The two methods share 38 genes in our
-run, against 8 in the paper. NAT1 and GATA3, both discussed in the
-paper, are selected by both methods. Varying \(\gamma\) changes the size
-of the selection (42, 56 and 72 genes for
-\(\gamma = 0.90, 0.95, 0.99\)), but 36 genes are selected at all three
-values. Some genes discussed in the paper are unstable: TOP2A is
-selected at 0.90 and 0.99 but not at 0.95, and CXCL12 only at 0.99.
+\hypertarget{key-takeaways}{%
+\subsubsection{Key takeaways}\label{key-takeaways}}
 
-\hypertarget{limitations}{%
-\subsubsection{Limitations}\label{limitations}}
-
-The true set of relevant genes is unknown, so this is an illustration,
-as in the paper, and cannot show that one method is better. We only
-checked stability with respect to \(\gamma\), not \(\hat\Sigma\) or the
-sample. The results rely on the patched function and the current
-annotation version.
+\begin{itemize}
+\item
+  WLasso Works primarily for quantitative data, there is an MSE
+  minimization that happens when fitting the Lasso.
+\item
+  The WLasso package presented some errors, so it might be better to fit
+  the math directly rather than relying on the package.
+\item
+  \href{https://cran.r-project.org/web/packages/WLogit/WLogit.pdf}{``WLogit''
+  Package} developed by the same authors.
+\end{itemize}
 
 \textbf{Reference.} Zhu, W., Lévy-Leduc, C. and Ternès, N. (2021). A
 variable selection approach for highly correlated predictors in

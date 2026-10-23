@@ -96,10 +96,12 @@ y_c <- y - mean(y)
 ### Method
 The model is $y = X\beta + \epsilon$ with $\mathrm{Cor}(X) = \Sigma$. WLasso whitens the predictors with $\tilde{X} = X\Sigma^{-1/2}$, so that $y = \tilde{X}\tilde\beta + \epsilon$ with $\tilde\beta = \Sigma^{1/2}\beta$, and the error term is unchanged. It then minimises the generalised Lasso criterion
 $$\|y - \tilde{X}\tilde\beta\|_2^2 + \lambda \|\Sigma^{-1/2}\tilde\beta\|_1,$$
-and thresholds the estimates to the top $K$ (for $\tilde\beta$) and top $M$ (for $\beta$) coefficients, with $K$ and $M$ chosen by an MSE-ratio rule controlled by $\gamma$. $\Sigma$ was estimated with the two-block structure of Section 2.5: $(\hat\alpha_1,\hat\alpha_2,\hat\alpha_3) = (0.19, 0.27, 0.55)$, against $(0.17, 0.21, 0.52)$ in the paper.
+and thresholds the estimates to the top $K$ (for $\tilde\beta$) and top $M$ (for $\beta$) coefficients, with $K$ and $M$ chosen by an **MSE-ratio rule** controlled by $\gamma$. $\Sigma$ was estimated with the two-block structure of Section 2.5: $(\hat\alpha_1,\hat\alpha_2,\hat\alpha_3) = (0.19, 0.27, 0.55)$, against $(0.17, 0.21, 0.52)$ in the paper.
+
+The paremeters the model takes are $\gamma$, which we set to 0.95 (between 0.9 and 0.99 recommended by the paper), and max_steps = 500 (the paper does not find significance difference in performance between 500 and 2000).
 
 ### A problem with the package and our patch
-With the `WLasso` package (v1.0), `Whitening_Lasso()` returned an empty model on these data (the lowest MSE was at the first, all-zero step), although a plain Lasso on the same data selected 61 probes. The package works on its own example data and on simulated data of our size ($n = 189$, $p = 1105$). Reading the source, in the step that chooses $M$, the MSE is computed from the coefficients sorted by absolute value, not from the coefficients in their original order, so each coefficient multiplies the wrong column of $X$. We think this is a bug that does little harm when all correlations are positive, as in the paper's simulations. We changed that one argument in a copy of the function (not an official fix, and not confirmed with the authors), and results below come from that modified copy.
+With the `WLasso` package (v1.0), `Whitening_Lasso()` returned an empty model on these data (the lowest MSE was at the first, all-zero step), although a plain Lasso on the same data selected 60 probes. The package works on its own example data. I used Claude Code to help me identify the issue: using the source, in the step that chooses $M$, the MSE is computed from the coefficients sorted by absolute value, not from the coefficients in their original order, so each coefficient multiplies the wrong column of $X$. We think this is a bug that does little harm when all correlations are positive, as in the paper's simulations. We changed that one argument in a copy of the function (not an official fix), and results below come from that modified copy.
 
 ```{r, warning=FALSE}
 # Install WLasso package
@@ -145,12 +147,12 @@ environment(WL_fixed) <- asNamespace("WLasso")
 # sum(mod_fix$beta.min != 0)
 ```
 
-```{r}
+```{r, warning=FALSE}
 # We also fit regular Lasso for comparison:
 #install.packages("glmnet")
-library(glmnet)
-cvfit <- cv.glmnet(X, y_c)
-sum(coef(cvfit, s = "lambda.min")[-1] != 0)
+# library(glmnet)
+# cvfit <- cv.glmnet(X, y_c)
+# sum(coef(cvfit, s = "lambda.min")[-1] != 0)
 # returns 60 coefficients!!!!
 ```
 
@@ -158,11 +160,15 @@ sum(coef(cvfit, s = "lambda.min")[-1] != 0)
 | Method | Probes | Genes |
 |---|---|---|
 | WLasso ($\gamma = 0.95$, patched) | 59 | 56 |
-| Lasso (cross-validation) | 62 | 59 |
+| Lasso (cross-validation) | 60 | 59 |
 
-The paper reports 63 and 66 genes. The two methods share 38 genes in our run, against 8 in the paper. NAT1 and GATA3, both discussed in the paper, are selected by both methods. Varying $\gamma$ changes the size of the selection (42, 56 and 72 genes for $\gamma = 0.90, 0.95, 0.99$), but 36 genes are selected at all three values. Some genes discussed in the paper are unstable: TOP2A is selected at 0.90 and 0.99 but not at 0.95, and CXCL12 only at 0.99.
+### Key takeaways
 
-### Limitations
-The true set of relevant genes is unknown, so this is an illustration, as in the paper, and cannot show that one method is better. We only checked stability with respect to $\gamma$, not $\hat\Sigma$ or the sample. The results rely on the patched function and the current annotation version.
++ WLasso Works primarily for quantitative data, there is an MSE minimization that happens when fitting the Lasso.
+
++ The WLasso package presented some errors, so it might be better to fit the math directly rather than relying on the package.
+
++ ["WLogit" Package](https://cran.r-project.org/web/packages/WLogit/WLogit.pdf) developed by the same authors.
+
 
 **Reference.** Zhu, W., Lévy-Leduc, C. and Ternès, N. (2021). A variable selection approach for highly correlated predictors in high-dimensional genomic data. *Bioinformatics*, 37(16), 2238–2244.
