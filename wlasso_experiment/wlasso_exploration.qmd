@@ -104,11 +104,9 @@ epsilon <- rnorm(n)
 y <- as.vector(X %*% beta + epsilon)
 ```
 
-```{r, include=TRUE}
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.align='center'}
 library(corrplot)
-
 R_empirical <- cor(X)
-
 par(mfrow = c(1, 2))
 
 # 1. Population correlation matrix
@@ -117,7 +115,10 @@ corrplot(
   method = "color",
   type = "lower",
   tl.pos = "n",
-  diag = FALSE
+  diag = FALSE,
+  title = "Population correlation matrix",
+  mar = c(0, 0, 2, 0),
+  font.main = 1
 )
 
 # 2. Empirical correlation matrix
@@ -126,7 +127,10 @@ corrplot(
   method = "color",
   type = "lower",
   tl.pos = "n",
-  diag = FALSE
+  diag = FALSE,
+  title = "Simulated correlation matrix",
+  mar = c(0, 0, 2, 0),
+  font.main = 1
 )
 
 par(mfrow = c(1, 1))
@@ -283,26 +287,10 @@ where:
 - $U$ is an orthogonal matrix whose columns are the eigenvectors of $R$, satisfying $U^TU = UU^T = I_p$.
 - $D = \operatorname{diag}(d_1,\ldots,d_p)$ is a diagonal matrix containing the positive eigenvalues of $R$.
 
-Using this decomposition, we define the inverse square root of the correlation matrix:
-
-$$
-R^{-1/2} = UD^{-1/2}U^T,
-$$
-
-where
-
-$$
-D^{-1/2} =
-\operatorname{diag}
-\left(
-\frac{1}{\sqrt{d_1}},\ldots,\frac{1}{\sqrt{d_p}}
-\right).
-$$
-
 We define the whitened design matrix as:
 
 $$
-{\widetilde{X} = XR^{-1/2}}
+\widetilde{X} = XR^{-1/2}, \qquad R^{-1/2} = UD^{-1/2}U^T
 $$
 
 To understand why this transformation removes correlations, consider the covariance matrix of a row of $X$. Assuming $\operatorname{Cov}(X_i)=R$, we obtain:
@@ -318,7 +306,54 @@ $$
 
 Therefore, the transformed predictors have an identity population covariance matrix. This means that the columns of $\widetilde{X}$ are uncorrelated in the population.
 
-Importantly, since our simulated dataset has only $n=50$ observations, the empirical correlation matrix $\operatorname{cor}(\widetilde{X})$ will not be exactly equal to $I_p$.
+Importantly, since our simulated dataset has only $n=50$ observations, the empirical correlation matrix $\operatorname{cor}(\widetilde{X})$ will not be exactly equal to $I_p$. Form our simulated data, the design matrix results in the correlation matrix below, which is much closer to the identity matrix (uncorrelated variables).
+
+```{r, include=FALSE}
+# Eigendecomposition of the correlation matrix
+eig <- eigen(R)
+
+U <- eig$vectors
+D <- eig$values
+
+# Calculate R^(-1/2)
+R_inv_sqrt <- U %*%
+  diag(1 / sqrt(D)) %*%
+  t(U)
+
+# Whiten the predictor matrix
+X_tilde <- X %*% R_inv_sqrt
+
+# Check dimensions
+dim(X_tilde)
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align='center'}
+par(mfrow = c(1, 2))
+
+corrplot(
+  cor(X),
+  method = "color",
+  type = "lower",
+  tl.pos = "n",
+  diag = FALSE,
+  title = "Before whitening",
+  mar = c(0, 0, 2, 0),
+  font.main = 1
+)
+
+corrplot(
+  cor(X_tilde),
+  method = "color",
+  type = "lower",
+  tl.pos = "n",
+  diag = FALSE,
+  title = "After whitening",
+  mar = c(0, 0, 2, 0),
+  font.main = 1
+)
+
+par(mfrow = c(1, 1))
+```
 
 Recall our original regression model:
 
@@ -344,57 +379,12 @@ $$
 \qquad\text{and}\qquad
 {\widetilde{\beta}=R^{1/2}\beta}
 $$
+
 The error term $\epsilon$ remains unchanged because we are only transforming the predictors and coefficients, not the response variable.
 
 **Important:** Although the original coefficient vector $\beta$ is sparse, the transformed coefficient vector $\widetilde{\beta}$ is generally not sparse. This happens because multiplying by $R^{1/2}$ mixes information across coefficients.
 
 Consequently, applying ordinary Lasso directly to $\widetilde{X}$ would not necessarily recover the original sparse coefficient vector. WLasso addresses this by modifying the penalty, which we will derive in the next step.
-
-```{r}
-# Eigendecomposition of the correlation matrix
-eig <- eigen(R)
-
-U <- eig$vectors
-D <- eig$values
-
-# Calculate R^(-1/2)
-R_inv_sqrt <- U %*%
-  diag(1 / sqrt(D)) %*%
-  t(U)
-
-# Whiten the predictor matrix
-X_tilde <- X %*% R_inv_sqrt
-
-# Check dimensions
-dim(X_tilde)
-```
-
-```{r}
-par(mfrow = c(1, 2))
-
-corrplot(
-  cor(X),
-  method = "color",
-  type = "lower",
-  tl.pos = "n",
-  diag = FALSE,
-  title = "Before whitening",
-  mar = c(0, 0, 2, 0)
-)
-
-corrplot(
-  cor(X_tilde),
-  method = "color",
-  type = "lower",
-  tl.pos = "n",
-  diag = FALSE,
-  title = "After whitening",
-  mar = c(0, 0, 2, 0)
-)
-
-par(mfrow = c(1, 1))
-```
-
 
 ## Deriving the Generalized Lasso Penalty
 
@@ -439,7 +429,6 @@ $$
 Therefore, the generalized Lasso objective becomes:
 
 $$
-\boxed{
 \hat{\widetilde{\beta}}
 =
 \arg\min_{\widetilde{\beta}}
@@ -448,14 +437,15 @@ $$
 +
 \lambda\|R^{-1/2}\widetilde{\beta}\|_1
 \right\}
-}
 $$
 
 Unlike ordinary Lasso applied to the whitened predictors, the generalized Lasso penalizes a linear transformation of the coefficients.
 
 This is important because $\widetilde{\beta}$ is generally not sparse, even when the original $\beta$ is sparse. By penalizing $R^{-1/2}\widetilde{\beta}=\beta$, the generalized Lasso encourages sparsity in the original coefficient vector, not the transformed one. We use the package `genlasso` instead of `glmnet` because we penalize a linear transformation of coefficients.
 
-```{r, warning=FALSE, include=FALSE}
+First, we fit the Lasso without any parameter tunning. Below, each colored line is a coefficient as lambda increases. Some go to zero quicker than others (for smaller lambdas). So, at this moment, we have the different estimated $\widetilde{\beta}$ for each value of $\lambda$.
+
+```{r, warning=FALSE, echo=FALSE, message=FALSE}
 library(genlasso)
 
 # Fit the generalized Lasso solution path
@@ -467,36 +457,22 @@ fit_genlasso <- genlasso(
 )
 
 # Inspect the model
-print(fit_genlasso)
+# print(fit_genlasso)
 
 # Plot
 plot(fit_genlasso)
 ```
-Here each line represents one coefficient as lambda increases.
 
-```{r, include=FALSE}
+Notes: 
 
-# Choose a penalty value from the fitted path
-lambda_example <- median(fit_genlasso$lambda)
++ At this point, we do not select an optimal value of $\lambda$, yet. In the paper we apply a double thresholding procedure.
++ The double thresholding procedure is used because we must not only select non-sparse coefficients in the transformed space, but also in the real space. Once we find beta coefficients in the transformed space $\widetilde{\beta}$ s using Lasso, we must take them back to the original space using $\beta=R^{-1/2}\widetilde{\beta}$.
 
-# Extract transformed coefficient estimates
-beta_tilde_hat <- as.vector(
-  coef(fit_genlasso, lambda = lambda_example)$beta
-)
+## Double thresholding
 
-# Recover coefficients in the original coordinates
-beta_hat <- as.vector(
-  R_inv_sqrt %*% beta_tilde_hat
-)
 
-# Compare the first 15 coefficients
-data.frame(
-  Variable = 1:15,
-  True_Beta = beta[1:15],
-  Estimated_Beta = round(beta_hat[1:15], 3)
-)
 
-```
+
 
 
 
