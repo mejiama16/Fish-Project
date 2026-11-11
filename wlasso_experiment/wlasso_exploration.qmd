@@ -466,17 +466,274 @@ plot(fit_genlasso)
 Notes: 
 
 + At this point, we do not select an optimal value of $\lambda$, yet. In the paper we apply a double thresholding procedure.
-+ The double thresholding procedure is used because we must not only select non-sparse coefficients in the transformed space, but also in the real space. Once we find beta coefficients in the transformed space $\widetilde{\beta}$ s using Lasso, we must take them back to the original space using $\beta=R^{-1/2}\widetilde{\beta}$.
++ The double thresholding procedure is used because we must not only select non-sparse coefficients in the transformed space, but also in the real space. Once we find beta coefficients in the transformed space $\widetilde{\beta}$s using Lasso, we must take them back to the original space using $\beta=R^{-1/2}\widetilde{\beta}$.
 
 ## Double thresholding
 
+The double-thresholding procedure consists of the following steps for each candidate penalty parameter $\lambda$:
+
+1. **Extract the estimated whitened coefficients.** Obtain $\hat{\widetilde{\beta}}(\lambda)$ from the generalized Lasso solution path.
+
+2. **First thresholding ($K$).** Retain the $K$ largest coefficients in absolute value, preserving their estimated values. The remaining coefficients are replaced by the $K$-th largest absolute coefficient, while preserving their original signs.
+
+   For example, suppose:
+
+   $$
+   \hat{\widetilde{\beta}}=
+   \begin{pmatrix}
+   2.0 & -1.5 & 0.8 & -0.3
+   \end{pmatrix}^T.
+   $$
+
+   If $K=2$, the thresholded coefficients become:
+
+   $$
+   \hat{\widetilde{\beta}}^{(2)}=
+   \begin{pmatrix}
+   2.0 & -1.5 & 1.5 & -1.5
+   \end{pmatrix}^T.
+   $$
+
+3. **Recover the original coefficients.** Map the thresholded estimates back to the original coordinate system:
+
+   $$
+   \hat{\beta}^{0}(\lambda)
+   =
+   R^{-1/2}\hat{\widetilde{\beta}}^{(K)}(\lambda).
+   $$
+
+4. **Second thresholding ($M$).** Retain the $M$ largest recovered coefficients in absolute value and set all remaining coefficients to zero. This produces the final sparse estimate $\hat{\beta}^{(M)}(\lambda)$.
+
+## Selecting the Tuning Parameters
+
+For each $\lambda$, the parameters $K$ and $M$ are selected using the paper's MSE-ratio criterion, which measures whether retaining an additional coefficient produces a sufficiently large reduction in error.
+
+The threshold $c$ controls this decision. For example, $c=0.95$ means that an additional coefficient must reduce the error by more than approximately 5% to justify increasing the number of retained coefficients.
+
+Once $K$ and $M$ have been determined for each candidate $\lambda$, we calculate:
+
+$$
+\operatorname{MSEM}(\lambda)
+=
+\left\|
+y-X\hat{\beta}^{(M)}(\lambda)
+\right\|_2^2.
+$$
+
+Finally, we select:
+
+$$
+\boxed{
+\lambda_{\mathrm{opt}}
+=
+\arg\min_{\lambda}\operatorname{MSEM}(\lambda)
+}
+$$
+
+Thus, the procedure selects $K$ and $M$ for each candidate $\lambda$, evaluates the resulting model, and then chooses the optimal penalty parameter.
+
+This algorithm is more complex to fit manually, so we use the package.
+
+## Using the WLasso package
+
+```{r, include=FALSE}
+# package
+library(WLasso)
+
+# list the functions available in WLasso
+ls("package:WLasso")
+
+# open the package documentation
+help(package = "WLasso")
+```
+
+The package is called WLasso. It contains functions: Sigma Estimation, top, top_thresh, Whitening_Lasso.
+
+We start by using the `Sigma_Estimation(X)` function, to observe how it differs from the normal `Cor(X)` in estimating the correlation matrix.
+
+```{r, include=FALSE}
+# Use package function
+sigma_fit <- Sigma_Estimation(X)
+
+# Examine outputs
+# Estimated correlation matrix (retrieve using mat)
+R_hat <- sigma_fit$mat
+
+# Dimensions
+# dim(R_hat)
+
+# Estimated block correlation parameters (retrieve using alpha)
+# sigma_fit$alpha
+
+# Estimated block positions
+sigma_fit$group_act
+
+# Compare with sample correlation matrix
+R_sample <- cor(X)
+```
+
+```{r, echo=FALSE}
+# Plot to see differences
+par(mfrow = c(1, 2))
+
+corrplot(
+  R_sample,
+  method = "color",
+  type = "lower",
+  tl.pos = "n",
+  diag = FALSE,
+  title = "Correlation matrix from the sample",
+  mar = c(0, 0, 2, 0),
+  font.main = 1
+)
+
+corrplot(
+  R_hat,
+  method = "color",
+  type = "lower",
+  tl.pos = "n",
+  diag = FALSE,
+  title = "Correlation matrix using package",
+  mar = c(0, 0, 2, 0),
+  font.main = 1
+)
+
+par(mfrow = c(1, 1))
+```
+
+The function in the package identifies $\alpha_1=0.2249$, compared to 0.3 in the population, $\alpha_2=0.45$ compared to 0.5 in the population, and $\alpha_3=0.66$ compared to 0.7 in the population. Note that the package returns this using `$alpha` and in order of: inactive-inactive, inactive-active, and active-active. The function identifies groups 1–9 and 10–100, closely approximating the true partition of 1–10 and 11–100. Note that the package uses hierarchical clustering to partition predictors into two groups, this is not variable selection yet.
+
+Next, we use `Whitening_Lasso()` to find the coefficient estimates. Note that all steps happen inside the function, we provide it the `X` design matrix, the `Y` response vector, the estimated correlation matrix `R_hat`, and we select a `gamma` value. Authors report values between 0.9 and 0.99 perform well, this is the threshold value at which an increase in MSE is worth adding an additional predictor or not.
+
+```{r, include=FALSE}
+# fit the model
+fit_wlasso <- Whitening_Lasso(
+  X = X,
+  Y = y,
+  Sigma = R_hat,
+  gamma = 0.95,
+  maxsteps = 2000
+)
+```
+
+```{r, include=FALSE}
+# 1. Inspecting the output of Whitening_Lasso()
+
+# See the five outputs
+names(fit_wlasso)
+
+# Inspect each output
+fit_wlasso$lambda # all the 236 lambda values the model attempts
+fit_wlasso$beta # final coefficient estimates for each lambda
+fit_wlasso$trans_mat # whitening transformation correlation matrix R^-1/2
+fit_wlasso$beta.min # 100 coefficients estimated using MSE criterion (FINAL)
+fit_wlasso$mse # all 236 MSE for each lambda
+
+# Length of each output
+length(fit_wlasso$lambda)
+dim(fit_wlasso$beta) # 100 coefficient estimates for each lambda
+dim(fit_wlasso$trans_mat)
+length(fit_wlasso$beta.min) # 100 coefficient estimates (minimize MSE)
+length(fit_wlasso$mse)
+
+# Inspect
+round(fit_wlasso$beta[1:5, 1:10], 3)
+```
+
+```{r, include=FALSE}
+# Retrieve position of min. MSE in the vector
+best_idx <- which.min(fit_wlasso$mse)
+
+# Get the optimal lambda
+fit_wlasso$lambda[best_idx]
+
+# Get its corresponding MSE
+fit_wlasso$mse[best_idx]
+
+# Get its estimated coefficients
+fit_wlasso$beta[best_idx, ]
+
+# Extract coefficients at the optimal lambda
+beta_opt <- fit_wlasso$beta[best_idx, ]
+
+# Identify non-zero coefficients
+selected <- which(beta_opt != 0)
+
+# Display selected variables and their coefficients
+data.frame(
+  Variable = selected,
+  Estimated_Beta = beta_opt[selected]
+)
+```
+
+$\lambda = 3$ minimizes MSE, at $MSE=1.04$. The method identified all 10 active coefficients correctly, and 4 additional ones. In general, this method results better than regular Lasso in terms of variable selection (regular Lasso identified 23 variables; 13 false positives). 
+
+| Metric | Value |
+|:-----------------------|------:|
+| True Positives (TP) | 10 |
+| False Positives (FP) | 4 |
+| False Negatives (FN) | 0 |
+| Total Selected | 14 |
+
+: WLasso variable selection results on the simulated dataset.
 
 
+## Evaluating the package MSE Calculation
+```{r, echo=FALSE}
+# Coefficients at the package's optimal lambda
+beta_opt <- fit_wlasso$beta[best_idx, ]
 
+# Predictions from the selected model
+y_hat <- as.vector(X %*% beta_opt) #Y = X*beta
 
+# Calculate MSE manually
+mse_manual <- mean((y - y_hat)^2)
 
+# MSE reported by the package
+mse_package <- fit_wlasso$mse[best_idx]
 
+# Compare
+data.frame(
+  MSE_Package = mse_package,
+  MSE_Manual = mse_manual,
+  Difference = mse_package - mse_manual
+)
+```
 
+Note that at the optimal lambda, and using the same estimated coefficients, the MSE estimated by the package and the manual MSE are not the same. 
 
+```{r, echo=FALSE}
+# Recalculate actual MSE for every lambda
+mse_manual_path <- apply(
+  fit_wlasso$beta,
+  1,
+  function(b) mean((y - as.vector(X %*% b))^2)
+)
 
+# Compare with package MSE
+plot(
+  fit_wlasso$lambda,
+  fit_wlasso$mse,
+  type = "l",
+  col = "red",
+  lwd = 2,
+  xlab = "Lambda",
+  ylab = "MSE",
+  main = "Package vs. Actual MSE"
+)
+
+lines(
+  fit_wlasso$lambda,
+  mse_manual_path,
+  col = "blue",
+  lwd = 2
+)
+
+legend(
+  "topright",
+  legend = c("Package MSE", "Actual MSE"),
+  col = c("red", "blue"),
+  lwd = 2
+)
+```
 
