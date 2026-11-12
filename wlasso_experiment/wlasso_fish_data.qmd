@@ -1,0 +1,322 @@
+---
+title: "Fish Data: Diagnostics, Missing Values and Correlations"
+author: Mariana Garcia Mejia
+date: today
+date-format: long
+format:
+  pdf:
+    keep-tex: true
+    number-sections: true
+    toc: false
+---
+
+```{r, include=FALSE}
+library(tidyverse)
+library(here)
+
+df_analysis <- read_csv(here("data/analysis.csv"))
+head(df_analysis)
+dim(df_analysis) # 14575x484
+```
+
+```{r, include=FALSE}
+df_clean <- df_analysis[, -(6:58)] 
+df_clean <- df_clean |> select(- "dateTimeSample", - "dateProcessed")
+head(df_clean)
+# there are 326 frequencies
+```
+# Introduction
+
+# Dealing with missing values
+```{r, warning=FALSE, echo=FALSE}
+library(ggplot2)
+
+# Count missing values for each frequency, by species
+missing_df <- df_clean %>%
+  group_by(species) %>%
+  summarise(
+    across(starts_with("F"), ~ sum(is.na(.x))),
+    .groups = "drop"
+  ) %>%
+  pivot_longer(
+    cols = starts_with("F"),
+    names_to = "frequency",
+    values_to = "missing_count"
+  ) %>%
+  mutate(frequency = as.numeric(sub("^F", "", frequency)))
+
+# Plot
+ggplot(missing_df, aes(x = frequency, y = missing_count)) +
+  geom_col(fill = "steelblue", width = 0.5) +
+  facet_wrap(~ species, ncol = 1, scales = "free_y") +
+  labs(
+    title = "Missing Frequency Measurements by Species",
+    x = "Frequency",
+    y = "Number of Missing Values"
+  ) +
+  theme_minimal()
+```
+
+Notice the pattern in Figure 1, there are two ranges of frequencies with missing values: F90-F170 and F173-F260. Frequencies F90-F170 are missing for all three species, for almost 3000 observations for LT, 800 for LW and 300 for SMB. Lastly, there are 183 observations in LT with missing values. As shown in Figure 2, there is at least one missing value in 9 LT, 3 LW and 2 SMB. The fish LT008 is the only one missing values between F173-F260, hence we remove it from the dataset.
+
+```{r, include=FALSE}
+df_clean <- df_clean |>
+  filter(fishNum != "LT008")
+```
+
+
+```{r, echo=FALSE}
+# Count missing frequency values for each fish
+missing_fish <- df_clean %>%
+  group_by(species, fishNum) %>%
+  summarise(
+    missing_count = sum(is.na(pick(starts_with("F")))),
+    .groups = "drop"
+  )
+
+# Plot
+ggplot(missing_fish, aes(x = fishNum, y = missing_count)) +
+  geom_col(fill = "steelblue") +
+  facet_wrap(~ species, scales = "free_x", ncol = 1) +
+  labs(
+    title = "Missing Frequency Measurements by Individual Fish",
+    x = "Fish ID",
+    y = "Number of Missing Values"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r, echo=FALSE}
+missing_fish <- df_clean %>%
+  group_by(species, fishNum) %>%
+  summarise(
+    missing_pct = 100 * mean(is.na(as.matrix(pick(starts_with("F"))))),
+    .groups = "drop"
+  )
+
+ggplot(missing_fish, aes(x = fishNum, y = missing_pct)) +
+  geom_col(fill = "steelblue") +
+  facet_wrap(~ species, scales = "free_x", ncol = 1) +
+  labs(
+    title = "Percentage of Missing Measurements by Fish",
+    x = "Fish ID",
+    y = "Missing Measurements (%)"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Some fish may be missing more values simply because they have more fish as shown by Figure 2, so we observe Figure 3 which shows percentage of values missing for each fish to account for this. Among fish with missing observations, approximately 35% of frequency measurements are consistently missing, primarily within the F90–F170 range. This suggests a systematic pattern of missingness rather than isolated missing values. While some imputation methods were considered to replace missing values, given the small number of fish in the sample, the consequences of imputing missing values are unknown, and specially when focusing on dimensionality reduction we want to avoid introducing more noise than there already is to perceive signals clearly. Consequently, we drop any rows that have missing values in the frequencies (4,242 in total).
+
+```{r, include=FALSE}
+# Remove rows with missing frequency measurements
+freq_cols <- grep("^F[0-9]", names(df_clean), value = TRUE)
+
+df_complete <- df_clean[
+  complete.cases(df_clean[, freq_cols]),
+]
+```
+
+```{r, warning=FALSE, echo=FALSE}
+library(knitr)
+
+table4 <- df_complete %>%
+  group_by(species, fishNum) %>%
+  summarise(pings = n(), .groups = "drop") %>%
+  group_by(species) %>%
+  summarise(
+    `Number of fish` = n(),
+    `Total pings` = sum(pings),
+    `Median pings` = median(pings),
+    `Min. pings` = min(pings),
+    `Max. pings` = max(pings),
+    .groups = "drop"
+  )
+
+kable(
+  table4,
+  caption = "Overview of the dataset with no missing values",
+  digits = 1,
+  format = "pipe"
+)
+
+```
+
+## Exploration
+```{r, include=FALSE}
+library(corrplot)
+```
+
+
+```{r, echo=FALSE}
+# Select frequency measurements only
+X <- df_complete[, grepl("^F[0-9]", names(df_complete))]
+
+# Calculate empirical correlation matrix
+R_empirical <- cor(X)
+
+# Plot correlation matrix
+corrplot(
+  R_empirical,
+  method = "color",
+  type = "lower",
+  tl.pos = "n",
+  diag = FALSE,
+  title = "Fish frequency correlation matrix (All pings)",
+  mar = c(0, 0, 2, 0),
+  font.main = 1
+)
+
+par(mfrow = c(1, 1))
+```
+
+Since each fish contributes multiple pings, correlations in Figure 4 describe relationships across all pings, not across independent fish. Next, we average all frequencies by fish, to obtain one row per fish and plot the correlation matrix again.
+
+```{r, echo=FALSE}
+df_avg <- df_complete %>%
+  group_by(fishNum, species) %>%
+  summarise(
+    across(starts_with("F"), mean),
+    .groups = "drop"
+  )
+
+
+# Extract frequency measurements
+X_avg <- df_avg %>%
+  select(starts_with("F")) %>%
+  select(-"fishNum")
+
+# Calculate correlations
+R_avg <- cor(X_avg)
+
+# Plot
+corrplot(
+  R_avg,
+  method = "color",
+  type = "lower",
+  tl.pos = "n",
+  diag = FALSE,
+  title = "Correlation Matrix (One Average Measurement per Fish)",
+  mar = c(0, 0, 2, 0),
+  font.main = 1
+)
+
+par(mfrow = c(1, 1))
+```
+
+```{r, warning=FALSE, echo=FALSE}
+set.seed(123)  # Reproducibility
+
+df_random <- df_complete %>%
+  group_by(fishNum, species) %>%
+  slice_sample(n = 1) %>%
+  ungroup()
+
+# Correlation matrix
+# Select only frequency columns
+X_random <- df_random[, grepl("^F[0-9]", names(df_random))]
+
+# Calculate correlations
+R_random <- cor(X_random)
+
+# Plot
+corrplot(
+  R_random,
+  method = "color",
+  type = "lower",
+  tl.pos = "n",
+  diag = FALSE,
+  title = "Correlation Matrix (One Random Ping per Fish)",
+  mar = c(0, 0, 2, 0),
+  font.main = 1
+)
+
+par(mfrow = c(1, 1))
+```
+
+```{r, echo=FALSE}
+# Set up 2x2 plot
+par(mfrow = c(2, 2))
+
+for (i in 1:4) {
+
+  # Different random sample each time
+  set.seed(123 + i)
+
+  df_random <- df_complete %>%
+    group_by(fishNum, species) %>%
+    slice_sample(n = 1) %>%
+    ungroup()
+
+  # Select frequency columns
+  X_random <- df_random[, grepl("^F[0-9]", names(df_random))]
+
+  # Calculate correlation matrix
+  R_random <- cor(X_random)
+
+  # Plot
+  corrplot(
+    R_random,
+    method = "color",
+    type = "lower",
+    tl.pos = "n",
+    diag = FALSE,
+    title = paste("Random Sample", i),
+    mar = c(0, 0, 2, 0),
+    font.main = 1
+  )
+}
+
+# Reset plotting layout
+par(mfrow = c(1, 1))
+```
+
+## Closer frequencies are highly correlated
+
+```{r, echo=FALSE}
+# Extract frequency values
+freq <- as.numeric(sub("F", "", colnames(R_avg)))
+
+# Get all unique frequency pairs
+pairs <- which(upper.tri(R_avg), arr.ind = TRUE)
+
+# Calculate distance and correlation for each pair
+distance <- abs(freq[pairs[, 1]] - freq[pairs[, 2]])
+correlation <- R_avg[pairs]
+
+# Plot
+plot(
+  distance, correlation,
+  pch = 16, cex = 0.2,
+  col = rgb(0, 0, 0, 0.15),
+  xlab = "Distance between frequencies",
+  ylab = "Pearson correlation",
+  main = "Correlation vs. Frequency Distance (Average per fish)"
+)
+
+```
+
+```{r, echo=FALSE}
+# Extract frequency values
+freq <- as.numeric(sub("F", "", colnames(R_empirical)))
+
+# Get all unique frequency pairs
+pairs <- which(upper.tri(R_empirical), arr.ind = TRUE)
+
+# Calculate frequency distance and correlation
+distance <- abs(freq[pairs[, 1]] - freq[pairs[, 2]])
+correlation <- R_empirical[pairs]
+
+# Plot
+plot(
+  distance, correlation,
+  pch = 16, cex = 0.2,
+  col = rgb(0, 0, 0, 0.15),
+  xlab = "Distance between frequencies",
+  ylab = "Pearson correlation",
+  main = "Correlation vs. Frequency Distance (All Pings)"
+)
+
+```
+

@@ -190,6 +190,43 @@ IC_values <- as.vector(IC_values)
 # mean(IC_values >= 1)
 ```
 
+Notice that variables are highly correlated:
+```{r, warning=FALSE, echo=FALSE}
+library(ggplot2)
+
+# 1. Calculate correlation matrix
+R_X <- cor(X)
+
+# 2. Extract unique pairwise correlations
+# Exclude diagonal (correlation = 1) and duplicates
+correlations <- R_X[upper.tri(R_X)]
+
+# 3. Create data frame
+cor_df <- data.frame(correlation = correlations)
+
+# 4. Plot histogram
+ggplot(cor_df, aes(x = correlation)) +
+  geom_histogram(
+    binwidth = 0.05,
+    fill = "white",
+    color = "black"
+  ) +
+  geom_histogram(
+    data = subset(cor_df, correlation >= 0.5),
+    binwidth = 0.05,
+    fill = "red",
+    color = "black"
+  ) +
+  labs(
+    title = "Distribution of Pairwise Predictor Correlations",
+    subtitle = "Simulated data (n = 50, p = 100)",
+    x = "Correlations",
+    y = "Frequency",
+    caption = "Red bars indicate pairwise correlations ≥ 0.5."
+  ) +
+  theme_minimal(base_size = 13)
+```
+
 ## Fitting the regular Lasso
 
 Next, we fit the regular Lasso to have a baseline comparison for WLasso. The regular Lasso minimizes the MSE with an L1 penalty. This enforces sparsity more compared to for instance Ridge Regularization. WLasso benefits from this.
@@ -699,6 +736,11 @@ data.frame(
   Difference = mse_package - mse_manual
 )
 ```
+| MSE Package | MSE Manual |
+|:------------|------------|
+| 1.036 | 0.7937 |
+
+: MSE from the package and from the manual
 
 Note that at the optimal lambda, and using the same estimated coefficients, the MSE estimated by the package and the manual MSE are not the same. 
 
@@ -736,4 +778,206 @@ legend(
   lwd = 2
 )
 ```
+
+## Experiment: ChatGPT Fixed the Function
+
+ChatGPT identified a bug in the `Whitening_Lasso()` function during the second thresholding step, where the algorithm selects $M$. The package sorts the estimated coefficients by their absolute values before calculating the mean squared error (MSE), which changes their original order and removes their signs. Consequently, the coefficients are no longer correctly matched to their corresponding predictors when computing $\hat y=X\hat\beta$, producing inaccurate MSE estimates. In our simulation, the package reported an MSE of 1.0361, whereas the actual MSE of the selected model was 0.7938.
+
+```{r, include=FALSE}
+
+Whitening_Lasso_fixed <- function(X, Y, Sigma,
+                                  gamma = 0.95,
+                                  maxsteps = 2000) {
+
+  # STEP 1: Whitening transformation
+  Sigma <- round(Sigma, 6)
+
+  svd_sigma <- svd(Sigma)
+  U <- svd_sigma$u
+  D <- svd_sigma$d
+
+  inv_sqrt_Sigma <- U %*%
+    diag(1 / sqrt(D)) %*%
+    t(U)
+
+  X_tilde <- X %*% inv_sqrt_Sigma
+
+  # STEP 2: Generalized Lasso
+  fit <- suppressWarnings(
+    genlasso::genlasso(
+      y = Y,
+      X = X_tilde,
+      D = inv_sqrt_Sigma,
+      maxsteps = maxsteps
+    )
+  )
+
+  p <- ncol(X)
+  top_grid <- seq(5, floor(p / 5) * 5, by = 5)
+
+  # Original package thresholding functions
+  top_thresh <- function(x, thresh, sorted_vect) {
+    v <- sorted_vect[thresh]
+    ifelse(abs(x) > v, x, v)
+  }
+
+  top <- function(x, thresh, sorted_vect) {
+    v <- sorted_vect[thresh]
+    ifelse(abs(x) > v, x, 0)
+  }
+
+  # Store results
+  n_lambda <- length(fit$lambda)
+
+  beta_final <- matrix(NA_real_, n_lambda, p)
+  mse_final <- rep(NA_real_, n_lambda)
+  K_selected <- rep(NA_integer_, n_lambda)
+  M_selected <- rep(NA_integer_, n_lambda)
+
+  # STEP 3: Process each lambda
+  for (i in seq_len(n_lambda)) {
+
+    beta_tilde <- fit$beta[, i]
+    sorted_tilde <- sort(abs(beta_tilde), decreasing = TRUE)
+
+    # STEP 3A: First threshold K
+    beta_K <- sapply(
+      top_grid,
+      top_thresh,
+      x = beta_tilde,
+      sorted_vect = sorted_tilde
+    )
+
+    beta_K <- matrix(beta_K, nrow = p)
+
+    mse_K <- colMeans(
+      (X_tilde %*% beta_K - Y)^2
+    )
+
+    ratio_K <- round(
+      mse_K[-1] / mse_K[-length(mse_K)],
+      6
+    )
+
+    idx_K <- which(ratio_K >= gamma)[1]
+
+    K <- if (is.na(idx_K)) p else top_grid[idx_K]
+    K_selected[i] <- K
+
+    beta_tilde_K <- top_thresh(
+      beta_tilde, K, sorted_tilde
+    )
+
+    # STEP 3B: Transform back to original space
+    beta_original <- as.vector(
+      inv_sqrt_Sigma %*% beta_tilde_K
+    )
+
+    sorted_original <- sort(
+      abs(beta_original),
+      decreasing = TRUE
+    )
+
+    # STEP 3C: Second threshold M
+    # FIX: Use beta_original, NOT sorted_original
+    beta_M <- sapply(
+      top_grid,
+      top,
+      x = beta_original,
+      sorted_vect = sorted_original
+    )
+
+    beta_M <- matrix(beta_M, nrow = p)
+
+    # Correct MSE: coefficients retain predictor alignment
+    mse_M <- colMeans(
+      (X %*% beta_M - Y)^2
+    )
+
+    ratio_M <- round(
+      mse_M[-1] / mse_M[-length(mse_M)],
+      6
+    )
+
+    idx_M <- which(ratio_M >= gamma)[1]
+
+    M <- if (is.na(idx_M)) p else top_grid[idx_M]
+    M_selected[i] <- M
+
+    # Final coefficients in original predictor space
+    beta_final[i, ] <- round(
+      top(beta_original, M, sorted_original),
+      6
+    )
+
+    # FIX: Store the MSE of the actual final coefficients
+    mse_final[i] <- mean(
+      (Y - as.vector(X %*% beta_final[i, ]))^2
+    )
+  }
+
+  # STEP 4: Select lambda using corrected MSE
+  best_idx <- which.min(mse_final)
+
+  return(list(
+    lambda = fit$lambda,
+    beta = beta_final,
+    trans_mat = inv_sqrt_Sigma,
+    beta.min = beta_final[best_idx, ],
+    mse = mse_final,
+    K = K_selected,
+    M = M_selected,
+    best_idx = best_idx
+  ))
+}
+
+```
+
+```{r, include=FALSE}
+fit_fixed <- Whitening_Lasso_fixed(
+  X = X,
+  Y = y,
+  Sigma = R_hat,
+  gamma = 0.95,
+  maxsteps = 2000
+)
+```
+
+```{r, include=FALSE}
+# Compare optimal lambda and MSE
+data.frame(
+  Model = c("Original WLasso", "Corrected WLasso"),
+  Lambda = c(
+    fit_wlasso$lambda[which.min(fit_wlasso$mse)],
+    fit_fixed$lambda[fit_fixed$best_idx]
+  ),
+  MSE = c(
+    fit_wlasso$mse[which.min(fit_wlasso$mse)],
+    fit_fixed$mse[fit_fixed$best_idx]
+  ),
+  Selected = c(
+    sum(fit_wlasso$beta.min != 0),
+    sum(fit_fixed$beta.min != 0)
+  )
+)
+```
+
+```{r, include=FALSE}
+data.frame(
+  Model = c("Original WLasso", "Corrected WLasso"),
+  Actual_MSE = c(
+    mean((y - X %*% fit_wlasso$beta.min)^2),
+    mean((y - X %*% fit_fixed$beta.min)^2)
+  )
+)
+```
+
+| Model | ($\lambda$) | Selected | TP | Reported MSE | Actual MSE |
+|:---|---:|---:|---:|---:|---:|
+| Original WLasso | 3.16 | 14 | 10 | 1.036 | 0.79 |
+| Corrected WLasso | 3.59 | 14 | 10 | 0.75 | 0.75 |
+
+: WLasso vs. Corrected WLasso
+
+
 
