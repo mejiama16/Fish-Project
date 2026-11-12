@@ -291,7 +291,7 @@ plot(
   pch = 16, cex = 0.2,
   col = rgb(0, 0, 0, 0.15),
   xlab = "Distance between frequencies",
-  ylab = "Pearson correlation",
+  ylab = "Correlation",
   main = "Correlation vs. Frequency Distance (Average per fish)"
 )
 
@@ -314,7 +314,7 @@ plot(
   pch = 16, cex = 0.2,
   col = rgb(0, 0, 0, 0.15),
   xlab = "Distance between frequencies",
-  ylab = "Pearson correlation",
+  ylab = "Correlation",
   main = "Correlation vs. Frequency Distance (All Pings)"
 )
 
